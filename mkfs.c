@@ -879,43 +879,43 @@ static void show_help(const char *progname)
 {
 	printf("usage: %s [options] <mountpoint>\n\n", progname);
 	printf("File-system specific options:\n"
-		   "    --name=<s>          Name of the \"hello\" file\n"
-		   "                        (default: \"hello\")\n"
-		   "    --contents=<s>      Contents \"hello\" file\n"
-		   "                        (default \"Hello, World!\\n\")\n"
-		   "\n");
+			"    --name=<s>          Name of the \"hello\" file\n"
+			"                        (default: \"hello\")\n"
+			"    --contents=<s>      Contents \"hello\" file\n"
+			"                        (default \"Hello, World!\\n\")\n"
+			"\n");
 }
 
 void nvme_show_fdp_ruh_status(struct nvme_fdp_ruh_status *status)
 {
 	uint16_t nruhsd = le16toh(status->nruhsd);	
 	
-	for (unsigned int i = 0; i < nruhsd; i++) {
-        struct nvme_fdp_ruh_status_desc *ruhs = &status->ruhss[i];
-        printf("Placement Identifier %"PRIu16"; Reclaim Unit Handle Identifier %"PRIu16"\n",
-                le16toh(ruhs->pid), le16toh(ruhs->ruhid));
-        printf("  Estimated Active Reclaim Unit Time Remaining (EARUTR): %"PRIu32"\n",
-                le32toh(ruhs->earutr));
-        printf("  Reclaim Unit Available Media Writes (RUAMW): %"PRIu64"\n",
-                le64toh(ruhs->ruamw));
-        printf("\n");
-    }    
+	for(unsigned int i = 0; i < nruhsd; i++) {
+		struct nvme_fdp_ruh_status_desc *ruhs = &status->ruhss[i];
+		printf("Placement Identifier %"PRIu16"; Reclaim Unit Handle Identifier %"PRIu16"\n",
+				le16toh(ruhs->pid), le16toh(ruhs->ruhid));
+		printf("  Estimated Active Reclaim Unit Time Remaining (EARUTR): %"PRIu32"\n",
+				le32toh(ruhs->earutr));
+		printf("  Reclaim Unit Available Media Writes (RUAMW): %"PRIu64"\n",
+				le64toh(ruhs->ruamw));
+		printf("\n");
+	}    
 }
 
 static int nvme_passthru_identify(int fd, __u32 nsid, enum nvme_identify_cns cns,
              enum nvme_csi csi, void *data)
 {   
-    struct nvme_passthru_cmd cmd = {
-        .opcode         = nvme_admin_identify,
-        .nsid           = nsid,
-        .addr           = (__u64)(uintptr_t)data,
-        .data_len       = NVME_IDENTIFY_DATA_SIZE,
-        .cdw10          = cns,
-        .cdw11          = csi << NVME_IDENTIFY_CSI_SHIFT,
-        .timeout_ms     = NVME_DEFAULT_IOCTL_TIMEOUT,
-    };
-    
-    return ioctl(fd, NVME_IOCTL_ADMIN_CMD, &cmd);
+	struct nvme_passthru_cmd cmd = {
+		.opcode		=	nvme_admin_identify,
+		.nsid		=	nsid,
+		.addr		= 	(__u64)(uintptr_t)data,
+		.data_len	=	NVME_IDENTIFY_DATA_SIZE,
+		.cdw10		= 	cns,
+		.cdw11		= 	csi << NVME_IDENTIFY_CSI_SHIFT,
+		.timeout_ms	= 	NVME_DEFAULT_IOCTL_TIMEOUT,
+	};
+
+	return ioctl(fd, NVME_IOCTL_ADMIN_CMD, &cmd);
 }       
 
 int main(int argc, char *argv[])
@@ -925,7 +925,7 @@ int main(int argc, char *argv[])
 	struct nvme_fdp_config_log hdr;
 	struct nvme_fdp_config_desc* desc;
 	struct nvme_fdp_config_log *conf;
-    struct nvme_id_ctrl ctrl;	
+	struct nvme_id_ctrl ctrl;	
 	/* struct nvme_nvm_id_ns nvm_ns; */
 	/* struct ioring_data *ld; */
 	/* struct nvme_id_ns ns; */ 
@@ -941,35 +941,39 @@ int main(int argc, char *argv[])
 	attributes.mq_msgsize = sizeof(message_t);
 	
 	struct config {
-        __u16   egid;
-        __u32   namespace_id;
-		char    *output_format;
-        bool    human_readable;
-        bool    raw_binary;
-    };  
+		__u16	egid;
+		__u32	namespace_id;
+		char	*output_format;
+		bool	human_readable;
+		bool	raw_binary;
+	};  
 
-    struct config cfg = { 
-        .egid       = 0,
-        .output_format  = "normal",
-        .raw_binary = false,
+	struct config cfg = { 
+		.egid			=	0,
+		.output_format	=	"normal",
+		.raw_binary		=	false,
     }; 
 	
-	/* Set defaults -- we have to use strdup so that
-	   fuse_opt_parse can free the defaults if other
-	   values are specified */
+	/* 
+	 * Set defaults -- we have to use strdup so that
+	 * fuse_opt_parse can free the defaults if other
+	 * values are specified
+	 * */
 	options.filename = strdup("/dev/ng1n1");
 	options.contents = strdup("1");
 	cfg.egid = (__u16)atoi(options.contents); 
 
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
-			return 1;
+		return 1;
 
-	/* When --help is specified, first print our own file-system
-	   specific help text, then signal fuse_main to show
-	   additional help (by adding `--help` to the options again)
-	   without usage: line (by setting argv[0] to the empty
-	   string) */
+	/*
+	 * When --help is specified, first print our own file-system
+	 * specific help text, then signal fuse_main to show
+	 * additional help (by adding `--help` to the options again)
+	 * without usage: line (by setting argv[0] to the empty
+	 * string) 
+	 * */
 	if (options.show_help) {
 		show_help(argv[0]);
 		assert(fuse_opt_add_arg(&args, "--help") == 0);
@@ -979,9 +983,9 @@ int main(int argc, char *argv[])
 	int fd = open(options.filename, O_RDONLY);
 		
 	if (fd == -1) {
-        perror("open():");
-        return EXIT_FAILURE;
-    }	
+		perror("open():");
+		return EXIT_FAILURE;
+	}	
 	dev.fd = fd;
 #if FDPFS_DEBUG	
 	printf("open fd %d\n", fd);
@@ -989,23 +993,22 @@ int main(int argc, char *argv[])
 	int namespace_id = ioctl(fd, NVME_IOCTL_ID);
     
 	if (namespace_id < 0) {
-        perror("failed to fetch namespace-id\n");
-        goto fclose;
-    }   
+		perror("failed to fetch namespace-id\n");
+		goto fclose;
+	}   
 	
 	dev.nsid = namespace_id;
 	
 	err = nvme_passthru_identify(fd, 0, NVME_IDENTIFY_CNS_CTRL, NVME_CSI_NVM, &ctrl);
     
 	if (err) {
-        printf("%s: failed to fetch identify ctrl\n", options.filename);
-        goto fclose;
+		printf("%s: failed to fetch identify ctrl\n", options.filename);
+		goto fclose;
     }
 
 	struct stat stat_buf;
-    ret = fstat(fd, &stat_buf);
-	err = nvme_get_log_fdp_configurations(fd, cfg.egid, 0,
-			            sizeof(hdr), &hdr);
+	ret = fstat(fd, &stat_buf);
+	err = nvme_get_log_fdp_configurations(fd, cfg.egid, 0, sizeof(hdr), &hdr);
 	
  	if(err){
 		goto fclose;
@@ -1014,13 +1017,12 @@ int main(int argc, char *argv[])
 	log = malloc(hdr.size);
     
 	if (!log) {
-        err = -ENOMEM;
-        goto fclose;
-    }
+		err = -ENOMEM;
+		goto fclose;
+	}
 
-    err = nvme_get_log_fdp_configurations(fd, cfg.egid, 0,
-            hdr.size, log);
-
+	err = nvme_get_log_fdp_configurations(fd, cfg.egid, 0, hdr.size, log);
+	
 	if(err){
 		goto fclose;
 	}
@@ -1034,38 +1036,37 @@ int main(int argc, char *argv[])
 	fdpfs_update_dev(&dev, desc);
 	
 	if (!cfg.namespace_id) {
-        err = nvme_get_nsid(fd, &cfg.namespace_id);
-        if (err < 0) {
-            perror("get-namespace-id");
-            goto fclose;
-        }
-    }
+		err = nvme_get_nsid(fd, &cfg.namespace_id);
+		if (err < 0) {
+			perror("get-namespace-id");
+			goto fclose;
+		}
+	}
 	
 	struct nvme_fdp_ruh_status hdr2;
-    size_t len;
-    void *buf = NULL;
+	size_t len;
+	void *buf = NULL;
 	err = nvme_fdp_reclaim_unit_handle_status(fd, cfg.namespace_id, sizeof(hdr2), &hdr2);
-	
+
 	if (err) {
 		printf("error\n");
-        goto fclose;
-    }
-
-    len = sizeof(struct nvme_fdp_ruh_status) +
-        le16toh(hdr2.nruhsd) * sizeof(struct nvme_fdp_ruh_status_desc);
+		goto fclose;
+	}
+	len = sizeof(struct nvme_fdp_ruh_status) + 
+		le16toh(hdr2.nruhsd) * sizeof(struct nvme_fdp_ruh_status_desc);
 	
 	buf = malloc(len);
     
 	if (!buf) {
-        err = -ENOMEM;
-        goto fclose;
-    }
+		err = -ENOMEM;
+		goto fclose;
+	}
 	
 	err = nvme_fdp_reclaim_unit_handle_status(fd, cfg.namespace_id, len, buf);
 
 	if (err) {
-        goto fclose;
-    }
+		goto fclose;
+	}
 
 	ruh_status = (struct nvme_fdp_ruh_status *)buf;
 	
