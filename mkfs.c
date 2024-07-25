@@ -112,8 +112,8 @@ int find_free_inode(){
 	for (int i = 2; i < 100; i++){
 		if(spblock.inode_bitmap[i] == '0'){
 			spblock.inode_bitmap[i] = '1';
-		}
 			return i;
+		}
 	}
 
 	return -1;
@@ -256,12 +256,11 @@ void tree_to_array(filetype* queue, int* front, int* rear, int* index){
 			}
 		}
 	}
-	
+
 	tree_to_array(queue, front, rear, index);
 }
 
-void fdpfs_close_dev(struct fdpfs_dev *dev)
-{
+void fdpfs_close_dev(struct fdpfs_dev *dev){
 	blkid_cache cache;
 	int ret;
 	// currently skip
@@ -275,8 +274,7 @@ void fdpfs_close_dev(struct fdpfs_dev *dev)
 	blkid_send_uevent(dev->path, "change");
 }
 
-void print_fdp_info(struct fdpfs_dev *dev)
-{
+void print_fdp_info(struct fdpfs_dev *dev){
 	printf("Number of Reclaim Groups: %u\n", dev->nrg);
 	printf("Number of Reclaim Unit Handles: %u\n", dev->nruh);
 	printf("Number of Namespaces Supported: %u\n", dev->nnss);
@@ -289,8 +287,7 @@ void print_fdp_info(struct fdpfs_dev *dev)
 	}
 }
 
-void fdpfs_update_dev(struct fdpfs_dev *dev, struct nvme_fdp_config_desc* desc)
-{
+void fdpfs_update_dev(struct fdpfs_dev *dev, struct nvme_fdp_config_desc* desc){
 	/* Number of Reclaim Groups */
 	dev->nrg = le32toh(desc->nrg);
 
@@ -310,8 +307,7 @@ void fdpfs_update_dev(struct fdpfs_dev *dev, struct nvme_fdp_config_desc* desc)
 	dev->ruhs = desc->ruhs;
 }
 
-int fdpfs_open_dev(struct fdpfs_dev *dev, bool check_overwrite)
-{
+int fdpfs_open_dev(struct fdpfs_dev *dev, bool check_overwrite){
 	dev->name = basename(dev->path);
 
 	/* Open device */
@@ -343,10 +339,10 @@ char* read_from_cq(struct ioring_data *ld) {
 
     do {
 		read_barrier();
-        /*
-         * Remember, this is a ring buffer. If head == tail, it means that the
-         * buffer is empty.
-         * */
+		/*
+		 * Remember, this is a ring buffer. If head == tail, it means that the
+		 * buffer is empty.
+		 * */
 		if (head == *cring->tail){
 			break;
 		}
@@ -392,7 +388,7 @@ int fdpfs_nvme_uring_cmd_prep(struct nvme_uring_cmd *cmd, struct ioring_data *ld
 	/* cdw10 and cdw11 represent starting lba */
 	cmd->cdw10 = slba & 0xffffffff;
 	cmd->cdw11 = slba >> 32;
-    /* cdw12 represent number of lba's for read/write */
+	/* cdw12 represent number of lba's for read/write */
 	cmd->cdw12 = nlb | (ld->dtype << 20);
 	cmd->cdw13 = ld->dspec << 16;
 	cmd->nsid = ld->nsid;
@@ -425,25 +421,25 @@ int fdpfs_ioring_queue(struct ioring_data *ld){
 	ring->array[tail] = ld->index;
 	
 	/*
-     * Tell the kernel we have submitted events with the io_uring_enter() system
-     * call. We also pass in the IOURING_ENTER_GETEVENTS flag which causes the
-     * io_uring_enter() call to wait until min_complete events (the 3rd param)
-     * complete.
-     * */
+	 * Tell the kernel we have submitted events with the io_uring_enter() system
+	 * call. We also pass in the IOURING_ENTER_GETEVENTS flag which causes the
+	 * io_uring_enter() call to wait until min_complete events (the 3rd param)
+	 * complete.
+	 * */
 	
 	tail = next_tail;
 	/* Update the tail so the kernel can see it. */
-    if(*ring->tail != tail) {
-        *ring->tail = tail;
-    }
+	if(*ring->tail != tail) {
+		*ring->tail = tail;
+	}
 	
-	ret =  io_uring_enter(ld->ring_fd, 1,1, IORING_ENTER_GETEVENTS);
+	ret = io_uring_enter(ld->ring_fd, 1,1, IORING_ENTER_GETEVENTS);
 	
 	if(ret < 0) {
-        perror("io_uring_enter");
-        return 1;
+		perror("io_uring_enter");
+		return 1;
     }	
-
+	
 	return 0;
 }
 
