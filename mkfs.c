@@ -542,7 +542,7 @@ void *receiver(void *arg){
 	return NULL;
 }
 
-static int do_getattr(const char *path, struct stat *statit, struct fuse_file_info* fi) {
+static int do_getattr(const char *path, struct stat *statit, struct fuse_file_info* fi){
 	char *pathname;
 	pathname=(char *)malloc(strlen(path) + 2);
 
@@ -568,8 +568,8 @@ static int do_getattr(const char *path, struct stat *statit, struct fuse_file_in
 }
 
 int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, 
-		struct fuse_file_info *fi, enum fuse_readdir_flags)
-{
+		struct fuse_file_info *fi, enum fuse_readdir_flags){
+	
 	printf("READDIR\n");
 
 	filler(buffer, ".", NULL, 0, 0);
@@ -579,7 +579,7 @@ int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t off
 	strcpy(pathname, path);
 
 	filetype* dir_node = filetype_from_path(pathname);
-	
+
 	printf("pathname = %s\n", pathname);
 
 	if(dir_node == NULL){
@@ -592,11 +592,10 @@ int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t off
 			filler(buffer, dir_node->children[i]->name, NULL, 0, 0);
 		}
 	}
-
 	return 0;
 }
 
-int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi){
 	printf("READ\n");
 	char* pathname = malloc(sizeof(path)+1);
 	strcpy(pathname, path);
@@ -753,7 +752,7 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		int ret = mq_send(queue_infos[plmt_id].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 		
 		if(ret == -1){
-        	perror("mq_send failure at do_write");
+			perror("mq_send failure at do_write");
 			return -EIO;
 		}
 
@@ -817,7 +816,7 @@ int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
 	new_file -> valid = 1;
 
 	if(new_file -> parent == NULL)
-	return -ENOENT;
+		return -ENOENT;
 
 	add_child(new_file->parent, new_file);
 
@@ -866,14 +865,14 @@ int do_open(const char *path, struct fuse_file_info *fi) {
 
 
 static struct fuse_operations operations = {
-    .init = fdpfs_init,
-	.getattr	= do_getattr,
-    .readdir	= do_readdir,
-    .read		= do_read,
-    .mkdir		= do_mkdir,
-    .write		= do_write,
-	.create    	= do_create,
-	.open = do_open,
+	.init		=	fdpfs_init,
+	.getattr	=	do_getattr,
+	.readdir	=	do_readdir,
+	.read		=	do_read,
+	.mkdir		=	do_mkdir,
+	.write		=	do_write,
+	.create		= 	do_create,
+	.open		=	do_open,
 };
  
 static void show_help(const char *progname)
