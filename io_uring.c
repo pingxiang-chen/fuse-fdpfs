@@ -10,28 +10,28 @@ int fdpfs_ioring_queue_init(struct ioring_data* ld){
 	p.flags |= IORING_SETUP_SQE128;
 	p.flags |= IORING_SETUP_CQE32;
 
- 	/*   
-     * Clamp CQ ring size at our SQ ring size, we don't need more entries
-     * than that.
-     */
+	/*   
+	*	Clamp CQ ring size at our SQ ring size, we don't need more entries 
+	*	than that.
+	*/
 	p.flags |= IORING_SETUP_CQSIZE;
 	p.cq_entries = depth;
 
-    /*   
-     * Setup COOP_TASKRUN as we don't need to get IPI interrupted for
-     * completing IO operations.
-     */
+	/*   
+	 *   Setup COOP_TASKRUN as we don't need to get IPI interrupted for
+	 *   completing IO operations.
+	*/
 	p.flags |= IORING_SETUP_COOP_TASKRUN;
 	
- 	/*   
-     * io_uring is always a single issuer, and we can defer task_work
-     * runs until we reap events.
-     */
-    p.flags |= IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN;
-		
-    ret = syscall(__NR_io_uring_setup, depth, &p);
+	/*
+	 * io_uring is always a single issuer, and we can defer task_work
+	 * runs until we reap events.
+	*/
+	p.flags |= IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN;
     
-	if (ret < 0) {
+	ret = syscall(__NR_io_uring_setup, depth, &p);
+    
+	if(ret < 0) {
 		perror("io_uring_setup failed");
 		return ret;	
 	}
