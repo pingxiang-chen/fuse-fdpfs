@@ -34,6 +34,7 @@
 #else
 #define FDPFS_DEBUG 0
 #endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -59,12 +60,11 @@ typedef struct {
 #define BLKSIZE 4096
 
 typedef struct {
-  	int queue_id;
+	int queue_id;
   	char name[20]; // Queue name for identification (optional)	
 } queue_info_t;
 
 queue_info_t queue_infos[NUM_QUEUES];
-int total_bytes = 5;
 
 /* This is x86 specific */
 #define read_barrier()  __asm__ __volatile__("":::"memory")
@@ -78,20 +78,20 @@ int total_bytes = 5;
  * different values on the command line.
  */
 static struct options {
-        const char *filename;
-        const char *contents;
-        int show_help;
+	const char *filename;
+	const char *contents;
+	int show_help;
 } options;
 
-#define OPTION(t, p)                           \
-    { t, offsetof(struct options, p), 1 }
+#define OPTION(t, p) \
+	{ t, offsetof(struct options, p), 1 }
 
 static const struct fuse_opt option_spec[] = {
-        OPTION("--name=%s", filename),
-        OPTION("--contents=%s", contents),
-        OPTION("-h", show_help),
-        OPTION("--help", show_help),
-        FUSE_OPT_END
+	OPTION("--name=%s", filename),
+	OPTION("--contents=%s", contents),
+	OPTION("-h", show_help),
+	OPTION("--help", show_help),
+	FUSE_OPT_END
 };
 
 superblock spblock;
@@ -101,7 +101,10 @@ struct nvme_fdp_ruh_status* ruh_status;
 
 void add_child(filetype * parent, filetype * child){
 	(parent->num_children)++;
-	parent->children = realloc(parent->children, (parent->num_children)*sizeof(filetype*));
+	
+	parent->children = realloc(parent->children, 
+			(parent->num_children)*sizeof(filetype*));
+	
 	(parent->children)[parent->num_children - 1] = child;
 }
 
@@ -110,7 +113,7 @@ int find_free_inode(){
 		if(spblock.inode_bitmap[i] == '0'){
 			spblock.inode_bitmap[i] = '1';
 		}
-		return i;
+			return i;
 	}
 
 	return -1;
@@ -143,6 +146,7 @@ filetype * filetype_from_path(char * path){
 		printf("INCORRECT PATH\n");
 		exit(1);
 	}
+	
 	else{
 		path_name++;
 	}
@@ -156,7 +160,7 @@ filetype * filetype_from_path(char * path){
 
 	while(strlen(path_name) != 0){
 		index = strchr(path_name, '/');
-		
+
 		if(index != NULL){
 			strncpy(curr_folder, path_name, index - path_name);
 			curr_folder[index-path_name] = '\0';
@@ -192,20 +196,20 @@ void read_block(filetype* file, int blk, uint32_t n){
 	blocks = NULL;
 	int plmt_id = 0;
 	message_t msg;
-	
+
 	printf("read_block: blk = %d, n = %d\n", blk, n);
-	
+
 	msg.data = plmt_id; // Set data for the message
 	msg.buffer = NULL; 
 	msg.size = n;
 	msg.offset = 0;
 	msg.ddir = DDIR_READ;
 	msg.slba = file->datablocks[blk];
-	
+
 	int ret = mq_send(queue_infos[plmt_id].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
-	
+
 	if(ret == -1){
-        perror("mq_send failure at read_block");
+		perror("mq_send failure at read_block");
 		return;
 	}
 
@@ -230,8 +234,8 @@ void tree_to_array(filetype* queue, int* front, int* rear, int* index){
 			for(i=0; i<curr_node.num_children; i++){
 				if(*rear < *front)
 					*rear = *front;
-				queue[*rear] = *(curr_node.children[i]);
-				*rear += 1;
+			queue[*rear] = *(curr_node.children[i]);
+			*rear += 1;
 			}
 			while(i<5){
 				filetype waste_node;
@@ -262,7 +266,7 @@ void fdpfs_close_dev(struct fdpfs_dev *dev)
 	int ret;
 	// currently skip
 	//ret = fsync(dev->fd);
-	
+
 	ret = blkid_get_cache(&cache, NULL);
 	if (ret >= 0) {
 		blkid_get_dev(cache, dev->path, BLKID_DEV_NORMAL);
@@ -301,7 +305,7 @@ void fdpfs_update_dev(struct fdpfs_dev *dev, struct nvme_fdp_config_desc* desc)
 
 	/* Estimated Reclaim Unit Time Limit */
 	dev->erutl = le32toh(desc->erutl);
-	
+
 	/* Reclaim Unit Handle List */
 	dev->ruhs = desc->ruhs;
 }
@@ -338,17 +342,16 @@ char* read_from_cq(struct ioring_data *ld) {
 	struct ioring_data* tmp;
 
     do {
-        read_barrier();
+		read_barrier();
         /*
          * Remember, this is a ring buffer. If head == tail, it means that the
          * buffer is empty.
          * */
-        if (head == *cring->tail){
-            break;
+		if (head == *cring->tail){
+			break;
 		}
-        /* Get the entry */
-        cqe = &cring->cqes[head & *ld->cq_ring.ring_mask];
-
+		/* Get the entry */
+		cqe = &cring->cqes[head & *ld->cq_ring.ring_mask];
 		tmp = (struct ioring_data*) cqe->user_data;
 
 #if FDPFS_DEBUG	
@@ -360,14 +363,12 @@ char* read_from_cq(struct ioring_data *ld) {
 		}
 #endif		
 		if (cqe->res < 0)
-            fprintf(stderr, "Error: %s\n", strerror(abs(cqe->res)));
-		
+			fprintf(stderr, "Error: %s\n", strerror(abs(cqe->res)));
 		head++;
-		
 	} while (1);
-
-    *cring->head = head;
-    write_barrier();
+    
+	*cring->head = head;
+	write_barrier();
 	return tmp->orig_buffer;
 }
 
@@ -376,30 +377,30 @@ int fdpfs_nvme_uring_cmd_prep(struct nvme_uring_cmd *cmd, struct ioring_data *ld
 	
 	switch (ld->ddir) {
     	case DDIR_READ:
-        	cmd->opcode = nvme_cmd_read;
-        	break;
-    	case DDIR_WRITE:
-        	cmd->opcode = nvme_cmd_write;
-        	break;
-    	default:
-        	return -ENOTSUP;
-    }
+			cmd->opcode = nvme_cmd_read;
+			break;
+		case DDIR_WRITE:
+			cmd->opcode = nvme_cmd_write;
+			break;
+		default:
+			return -ENOTSUP;
+	}
 #if FDPFS_DEBUG	
 	printf("fdpfs_nvme_uring_cmd_prep slba = %llu, nlb = %u, cmd->opcode = %u \n", slba, nlb, cmd->opcode);
 	printf("fdpfs_nvme_uring_cmd_prep ld->dspec	= %u, ld->dtype = %u\n", ld->dspec, ld->dtype);
 #endif 
 	/* cdw10 and cdw11 represent starting lba */
-    cmd->cdw10 = slba & 0xffffffff;
-    cmd->cdw11 = slba >> 32;
+	cmd->cdw10 = slba & 0xffffffff;
+	cmd->cdw11 = slba >> 32;
     /* cdw12 represent number of lba's for read/write */
-    cmd->cdw12 = nlb | (ld->dtype << 20);
-    cmd->cdw13 = ld->dspec << 16;
- 	cmd->nsid = ld->nsid;
+	cmd->cdw12 = nlb | (ld->dtype << 20);
+	cmd->cdw13 = ld->dspec << 16;
+	cmd->nsid = ld->nsid;
 	cmd->addr = (__u64)(uintptr_t)ld->orig_buffer;
 	cmd->data_len = ld->orig_buffer_size;
 #if FDPFS_DEBUG
 	printf("fdpfs_nvme_uring_cmd_prep cmd->addr = %llu cmd->data_len = %u \n", cmd->addr, cmd->data_len);
-    printf("fdpfs_nvme_uring_cmd_prep cmd->metadata = %llu cmd->metadata_len = %u \n", cmd->metadata, cmd->metadata_len);
+	printf("fdpfs_nvme_uring_cmd_prep cmd->metadata = %llu cmd->metadata_len = %u \n", cmd->metadata, cmd->metadata_len);
 #endif
 	return 0;
 }
