@@ -106,7 +106,7 @@ int fdpfs_ioring_mmap(struct ioring_data *ld, struct io_uring_params *p)
     }
 	
 	cq_ptr = mmap(0, cring_sz, PROT_READ | PROT_WRITE,
-            MAP_SHARED | MAP_POPULATE, ld->ring_fd, IORING_OFF_CQ_RING);
+			MAP_SHARED | MAP_POPULATE, ld->ring_fd, IORING_OFF_CQ_RING);
 
 	/* Save useful fields in a global app_io_cq_ring struct for later
     * easy reference */
@@ -115,6 +115,7 @@ int fdpfs_ioring_mmap(struct ioring_data *ld, struct io_uring_params *p)
     cring->ring_mask = cq_ptr + p->cq_off.ring_mask;
     cring->ring_entries = cq_ptr + p->cq_off.ring_entries;
     cring->cqes = cq_ptr + p->cq_off.cqes;
+	
 	return 0;
 }
 
@@ -122,7 +123,6 @@ int fdpfs_ioring_mmap(struct ioring_data *ld, struct io_uring_params *p)
 int io_uring_enter(int ring_fd, unsigned int to_submit,
                           unsigned int min_complete, unsigned int flags)
 {
-    return (int) syscall(__NR_io_uring_enter, ring_fd, to_submit, min_complete,
+    return (int)syscall(__NR_io_uring_enter, ring_fd, to_submit, min_complete,
                    flags, NULL, 0);
 }
-
