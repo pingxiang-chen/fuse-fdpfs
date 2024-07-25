@@ -1,0 +1,13 @@
+[global]
+name=fio-seq-write
+filename=fio-seq-write
+rw=write
+bs=4K
+direct=0
+numjobs=1
+time_based
+directory=./fuse_mount/0
+
+[file1]
+size=8K
+iodepth=1
