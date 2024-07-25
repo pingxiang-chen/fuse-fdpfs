@@ -952,7 +952,7 @@ int main(int argc, char *argv[])
 		.egid			=	0,
 		.output_format	=	"normal",
 		.raw_binary		=	false,
-    }; 
+	}; 
 	
 	/* 
 	 * Set defaults -- we have to use strdup so that
@@ -1004,7 +1004,7 @@ int main(int argc, char *argv[])
 	if (err) {
 		printf("%s: failed to fetch identify ctrl\n", options.filename);
 		goto fclose;
-    }
+	}
 
 	struct stat stat_buf;
 	ret = fstat(fd, &stat_buf);
@@ -1089,8 +1089,8 @@ int main(int argc, char *argv[])
 
 	for (int i = 0; i < num_of_thread; i++) {
 		if (pthread_create(&threads[i], NULL, receiver, &queue_infos[i]) != 0) {
-		  perror("pthread_create");
-		  exit(1);
+			perror("pthread_create");
+			exit(1);
 		}
 	}
 	
@@ -1103,15 +1103,15 @@ fclose:
 #endif
 	for (int i = 0; i < NUM_QUEUES; i++) {
     	if (pthread_join(threads[i], NULL) != 0) {
-      		perror("pthread_join");
+			perror("pthread_join");
 			exit(1);
-    	}
-  	} 	
+		}
+	} 	
 	for (int i = 0; i < NUM_QUEUES; i++) {
-    	mq_close(queue_infos[i].queue_id);
-    	mq_unlink(queue_infos[i].name); // Remove the queue from the system
+		mq_close(queue_infos[i].queue_id);
+		mq_unlink(queue_infos[i].name); // Remove the queue from the system
   	}	
-	
+
 #if FDPFS_DEBUG
 	printf("Close file\n");
 #endif
