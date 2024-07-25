@@ -4,9 +4,9 @@ int fdpfs_ioring_queue_init(struct ioring_data* ld){
 	struct io_uring_params p;
 	int ret;
 	int depth = 1;
-	
+
 	memset(&p, 0, sizeof(p));
-	
+
 	p.flags |= IORING_SETUP_SQE128;
 	p.flags |= IORING_SETUP_CQE32;
 
@@ -14,14 +14,14 @@ int fdpfs_ioring_queue_init(struct ioring_data* ld){
      * Clamp CQ ring size at our SQ ring size, we don't need more entries
      * than that.
      */
-    p.flags |= IORING_SETUP_CQSIZE;
-    p.cq_entries = depth;
+	p.flags |= IORING_SETUP_CQSIZE;
+	p.cq_entries = depth;
 
     /*   
      * Setup COOP_TASKRUN as we don't need to get IPI interrupted for
      * completing IO operations.
      */
-    p.flags |= IORING_SETUP_COOP_TASKRUN;
+	p.flags |= IORING_SETUP_COOP_TASKRUN;
 	
  	/*   
      * io_uring is always a single issuer, and we can defer task_work
