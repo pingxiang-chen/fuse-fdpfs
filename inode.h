@@ -1,14 +1,14 @@
 #include <stdint.h>
 
 struct direct_blk {
-    int32_t seg_num;
-    int32_t blk_num;
+	int32_t seg_num;
+	int32_t blk_num;
 };
 
 typedef struct inode {
-    uint32_t ino;   // inode number
-    uint32_t size;
-    struct direct_blk direct[500];
+	uint32_t ino;   // inode number
+	uint32_t size;
+	struct direct_blk direct[500];
 } inode;
 
 typedef struct filetype {
@@ -34,5 +34,4 @@ typedef struct filetype {
 	int datablocks[16];
 	int number;
 	int blocks;
-
 } filetype;
