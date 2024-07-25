@@ -446,7 +446,7 @@ int fdpfs_ioring_queue(struct ioring_data *ld){
 int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 	unsigned index = 0;
 	struct nvme_uring_cmd *cmd;
-    struct io_uring_sqe *sqe;
+	struct io_uring_sqe *sqe;
 	sqe = &ld->sqes[(index) << 1];
 	sqe->fd = dev->fd;
 	sqe->opcode = IORING_OP_URING_CMD;
@@ -501,34 +501,34 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 	return fdpfs_nvme_uring_cmd_prep(cmd, ld, slba, nlb);
 }
 
-void *receiver(void *arg) {
+void *receiver(void *arg){
 	message_t msg;
 	struct ioring_data *ld;
-    ld = malloc(sizeof(*ld));
+	ld = malloc(sizeof(*ld));
 	queue_info_t *info = (queue_info_t *)arg;
 #if FDPFS_DEBUG
 	printf("Initilize Queue id: %d, name: %s \n", info->queue_id, info->name);
 #endif
     
-	if (!ld){
-        perror("malloc");
-        return NULL;
+	if(!ld){
+		perror("malloc");
+		return NULL;
     }
 
-    memset(ld, 0, sizeof(*ld));
+	memset(ld, 0, sizeof(*ld));
 
-    if(fdpfs_ioring_queue_init(ld))
+	if(fdpfs_ioring_queue_init(ld))
 		perror("fdpfs_ioring_queue_init_failed\n");	
 
 #if FDPFS_DEBUG
-    printf("io_uring_queue_init success\n");
+	printf("io_uring_queue_init success\n");
 #endif
 
 	while (1) {
 		int ret = mq_receive(info->queue_id, (char *) &msg, sizeof(message_t), NULL);
 		if (ret == -1) {
-			  perror("mq_receive");
-			  exit(1);
+			perror("mq_receive");
+			exit(1);
 		}
 		submit_to_sq(&dev, ld, msg);
 		fdpfs_ioring_queue(ld);
@@ -537,9 +537,7 @@ void *receiver(void *arg) {
 		printf("hey blocks = %s\n", blocks);	
 		printf("Queue id: %d, name: %s processing message: %d\n", info->queue_id,info->name, msg.data);
 #endif
-
 	}
-
 	num_of_thread++;
 	return NULL;
 }
