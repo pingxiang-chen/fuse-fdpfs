@@ -92,22 +92,22 @@ int fdpfs_ioring_mmap(struct ioring_data *ld, struct io_uring_params *p)
 	 * Save useful fields in a global app_io_sq_ring struct for later 
 	 * easy reference 
 	*/
-    sring->head = sq_ptr + p->sq_off.head;
-    sring->tail = sq_ptr + p->sq_off.tail;
-    sring->ring_mask = sq_ptr + p->sq_off.ring_mask;
-    sring->ring_entries = sq_ptr + p->sq_off.ring_entries;
-    sring->flags = sq_ptr + p->sq_off.flags;
-    sring->array = sq_ptr + p->sq_off.array;
-	
+	sring->head = sq_ptr + p->sq_off.head;
+	sring->tail = sq_ptr + p->sq_off.tail;
+	sring->ring_mask = sq_ptr + p->sq_off.ring_mask;
+	sring->ring_entries = sq_ptr + p->sq_off.ring_entries;
+	sring->flags = sq_ptr + p->sq_off.flags;
+	sring->array = sq_ptr + p->sq_off.array;
+
 	/* Map in the submission queue entries array */
-    ld->sqes = mmap(0, p->sq_entries * sizeof(struct io_uring_sqe),
+	ld->sqes = mmap(0, p->sq_entries * sizeof(struct io_uring_sqe),
             PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
             ld->ring_fd, IORING_OFF_SQES);
     
 	if (ld->sqes == MAP_FAILED) {
-        perror("mmap");
-        return 1;
-    }
+		perror("mmap");
+		return 1;
+	}
 	
 	cq_ptr = mmap(0, cring_sz, PROT_READ | PROT_WRITE,
 			MAP_SHARED | MAP_POPULATE, ld->ring_fd, IORING_OFF_CQ_RING);
