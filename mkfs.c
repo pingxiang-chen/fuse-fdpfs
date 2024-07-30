@@ -28,6 +28,7 @@
 #include "fdpfs.h"
 #include "io_uring.h"
 #include "super.h"
+#include "debug.h"
 
 #ifdef FDPFS_DEBUG
 #define FDPFS_DEBUG 1
@@ -42,6 +43,8 @@
 
 int num_of_thread = 0;
 
+bool initial_done = false;
+
 static struct fdpfs_dev dev;
 
 char* blocks;
@@ -55,9 +58,25 @@ typedef struct {
 	__u64 slba;
 } message_t;
 
+const struct debug_level debug_levels[] = {
+	{ .name = "iouring",
+	  .help = "IO uring logging",
+	  .shift = FDPFS_IO_URING,
+	},
+	{ .name = "FUSE",
+	  .help = "FUSE logging",
+	  .shift = FDPFS_FUSE,
+	},
+	{ .name = NULL, },
+};
+
+unsigned long fio_debug = 0;
+
 #define NUM_QUEUES 2  // Number of message queues to create
 #define MIN(a,b)	(a < b ? a : b)
 #define BLKSIZE 4096
+
+FILE *f_out = NULL;
 
 typedef struct {
 	int queue_id;
@@ -80,6 +99,7 @@ queue_info_t queue_infos[NUM_QUEUES];
 static struct options {
 	const char *filename;
 	const char *contents;
+	const char * debug;
 	int show_help;
 } options;
 
@@ -89,6 +109,7 @@ static struct options {
 static const struct fuse_opt option_spec[] = {
 	OPTION("--name=%s", filename),
 	OPTION("--contents=%s", contents),
+	OPTION("--debug %s", debug),
 	OPTION("-h", show_help),
 	OPTION("--help", show_help),
 	FUSE_OPT_END
@@ -119,10 +140,10 @@ int find_free_inode(){
 	return -1;
 }
 
-int find_free_db(){
+int find_free_db(unsigned int plmt_id){
 	for (int i = 1; i < 100; i++){
-		if(spblock.data_bitmap[i] == '0'){
-			spblock.data_bitmap[i] = '1';
+		if(spblock.data_bitmaps[plmt_id][i] == '0'){
+			spblock.data_bitmaps[plmt_id][i] = '1';
 			return i;
 		}
 	}
@@ -131,7 +152,7 @@ int find_free_db(){
 
 filetype * filetype_from_path(char * path){
 	char curr_folder[100];
-	char * path_name = malloc(strlen(path) + 2);
+	char *path_name = malloc(strlen(path) + 2);
 
 	strcpy(path_name, path);
 
@@ -154,7 +175,7 @@ filetype * filetype_from_path(char * path){
 	if(path_name[strlen(path_name)-1] == '/'){
 		path_name[strlen(path_name)-1] = '\0';
 	}
-
+	
 	char * index;
 	int flag = 0;
 
@@ -196,9 +217,6 @@ void read_block(filetype* file, int blk, uint32_t n){
 	blocks = NULL;
 	int plmt_id = 0;
 	message_t msg;
-
-	printf("read_block: blk = %d, n = %d\n", blk, n);
-
 	msg.data = plmt_id; // Set data for the message
 	msg.buffer = NULL; 
 	msg.size = n;
@@ -348,16 +366,9 @@ char* read_from_cq(struct ioring_data *ld) {
 		}
 		/* Get the entry */
 		cqe = &cring->cqes[head & *ld->cq_ring.ring_mask];
-		tmp = (struct ioring_data*) cqe->user_data;
+		tmp = (struct ioring_data*)cqe->user_data;
 
-#if FDPFS_DEBUG	
-		printf("read_from_cq, nsid = %d\n", tmp->nsid);
-		if(!tmp->orig_buffer)
-			printf("no data\n");
-		else{
-			printf("read_from_cq, orig_buffer = %s\n", tmp->orig_buffer);
-		}
-#endif		
+		dprint(FDPFS_IO_URING, "read_from_cq, nsid = %d\n", tmp->nsid);
 		if (cqe->res < 0)
 			fprintf(stderr, "Error: %s\n", strerror(abs(cqe->res)));
 		head++;
@@ -381,10 +392,7 @@ int fdpfs_nvme_uring_cmd_prep(struct nvme_uring_cmd *cmd, struct ioring_data *ld
 		default:
 			return -ENOTSUP;
 	}
-#if FDPFS_DEBUG	
-	printf("fdpfs_nvme_uring_cmd_prep slba = %llu, nlb = %u, cmd->opcode = %u \n", slba, nlb, cmd->opcode);
-	printf("fdpfs_nvme_uring_cmd_prep ld->dspec	= %u, ld->dtype = %u\n", ld->dspec, ld->dtype);
-#endif 
+
 	/* cdw10 and cdw11 represent starting lba */
 	cmd->cdw10 = slba & 0xffffffff;
 	cmd->cdw11 = slba >> 32;
@@ -394,10 +402,16 @@ int fdpfs_nvme_uring_cmd_prep(struct nvme_uring_cmd *cmd, struct ioring_data *ld
 	cmd->nsid = ld->nsid;
 	cmd->addr = (__u64)(uintptr_t)ld->orig_buffer;
 	cmd->data_len = ld->orig_buffer_size;
-#if FDPFS_DEBUG
-	printf("fdpfs_nvme_uring_cmd_prep cmd->addr = %llu cmd->data_len = %u \n", cmd->addr, cmd->data_len);
-	printf("fdpfs_nvme_uring_cmd_prep cmd->metadata = %llu cmd->metadata_len = %u \n", cmd->metadata, cmd->metadata_len);
-#endif
+	
+	dprint(FDPFS_IO_URING, "fdpfs_nvme_uring_cmd_prep slba = %llu, nlb = %u, cmd->opcode = %u \n", 
+			slba, nlb, cmd->opcode);
+	dprint(FDPFS_IO_URING, "fdpfs_nvme_uring_cmd_prep ld->dspec	= %u, ld->dtype = %u\n", 
+			ld->dspec, ld->dtype);
+	dprint(FDPFS_IO_URING, "fdpfs_nvme_uring_cmd_prep cmd->addr = %llu cmd->data_len = %u \n", 
+			cmd->addr, cmd->data_len);
+	dprint(FDPFS_IO_URING, "fdpfs_nvme_uring_cmd_prep cmd->metadata = %llu cmd->metadata_len = %u \n", 
+			cmd->metadata, cmd->metadata_len);
+	
 	return 0;
 }
 
@@ -407,17 +421,6 @@ int fdpfs_ioring_queue(struct ioring_data *ld){
 	int ret;
 	tail = *ring->tail;
 	next_tail = tail + 1;
-#if FDPFS_DEBUG
-	__u64 slba;
-	struct io_uring_sqe *sqe;
-	struct nvme_uring_cmd *cmd;
-	sqe = &ld->sqes[(ld->index) << 1];
-	cmd = (struct nvme_uring_cmd *)sqe->cmd;
-	slba = cmd->cdw10 & 0xffffffff;
-	printf("fdpfs_ioring_queue slba = %llu index = %u\n", slba, ld->index);
-	printf("fdpfs_ioring_queue cmd->opcode = %u \n", cmd->opcode);
-	printf("fdpfs_ioring_queue ld->dspec = %u, ld->dtype = %u\n", ld->dspec, ld->dtype);
-#endif
 	ring->array[tail] = ld->index;
 	
 	/*
@@ -456,16 +459,16 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 	__u32 nlb;
 
 #if FDPFS_DEBUG
-	printf("msg.ddir = %d\n", msg.ddir);
-	printf("msg.size = %zu\n", msg.size); 
-	printf("msg.offset = %ld\n", msg.offset);
-	printf("msg.slba = %lld\n", msg.slba);
-
-	printf("dev->fd = %d\n", dev->fd);
-	printf("dev->nsid = %d\n", dev->nsid);
-	printf("ld->ring_fd = %d\n", ld->ring_fd);
-	printf("submit_to_sq sqe->opcode = %u\n", IORING_OP_URING_CMD);
-	printf("submit_to_sq sqe->cmd_op = %lu\n", NVME_URING_CMD_IO);
+	dprint(FDPFS_IO_URING, "submit_to_sq\n");
+	dprint(FDPFS_IO_URING, "msg.ddir = %d\n", msg.ddir);
+	dprint(FDPFS_IO_URING, "msg.size = %zu\n", msg.size); 
+	dprint(FDPFS_IO_URING, "msg.offset = %ld\n", msg.offset);
+	dprint(FDPFS_IO_URING, "msg.slba = %lld\n", msg.slba);
+	dprint(FDPFS_IO_URING, "dev->fd = %d\n", dev->fd);
+	dprint(FDPFS_IO_URING, "dev->nsid = %d\n", dev->nsid);
+	dprint(FDPFS_IO_URING, "ld->ring_fd = %d\n", ld->ring_fd);
+	dprint(FDPFS_IO_URING, "sqe->opcode = %u\n", IORING_OP_URING_CMD);
+	dprint(FDPFS_IO_URING, "sqe->cmd_op = %lu\n", NVME_URING_CMD_IO);
 #endif
 	sqe->user_data = (unsigned long) ld;
 	cmd = (struct nvme_uring_cmd *)sqe->cmd;
@@ -486,17 +489,13 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 			break;
     	case DDIR_WRITE:
         	ld->ddir = DDIR_WRITE;
-			printf("Write msg.buffer = %s\n", msg.buffer);
 			ld->orig_buffer = (char*)msg.buffer;
 			break;
     	default:
         	return -ENOTSUP;
     }
 	
-#if FDPFS_DEBUG
-	printf("orig_buffer = %s\n", ld->orig_buffer);
-	printf("slba = %llu, nlb = %u\n", slba, nlb);
-#endif
+	dprint(FDPFS_IO_URING, "slba = %llu, nlb = %u\n", slba, nlb);
 
 	return fdpfs_nvme_uring_cmd_prep(cmd, ld, slba, nlb);
 }
@@ -506,9 +505,9 @@ void *receiver(void *arg){
 	struct ioring_data *ld;
 	ld = malloc(sizeof(*ld));
 	queue_info_t *info = (queue_info_t *)arg;
-#if FDPFS_DEBUG
-	printf("Initilize Queue id: %d, name: %s \n", info->queue_id, info->name);
-#endif
+	
+	dprint(FDPFS_IO_URING, "Initilize Queue id: %d, name: %s \n", 
+			info->queue_id, info->name);
     
 	if(!ld){
 		perror("malloc");
@@ -520,9 +519,7 @@ void *receiver(void *arg){
 	if(fdpfs_ioring_queue_init(ld))
 		perror("fdpfs_ioring_queue_init_failed\n");	
 
-#if FDPFS_DEBUG
-	printf("io_uring_queue_init success\n");
-#endif
+	dprint(FDPFS_IO_URING, "io_uring_queue_init success\n");
 
 	while (1) {
 		int ret = mq_receive(info->queue_id, (char *) &msg, sizeof(message_t), NULL);
@@ -533,10 +530,9 @@ void *receiver(void *arg){
 		submit_to_sq(&dev, ld, msg);
 		fdpfs_ioring_queue(ld);
 		blocks = read_from_cq(ld);
-#if FDPFS_DEBUG
-		printf("hey blocks = %s\n", blocks);	
-		printf("Queue id: %d, name: %s processing message: %d\n", info->queue_id,info->name, msg.data);
-#endif
+		
+		dprint(FDPFS_IO_URING, "Queue id: %d, name: %s processing message: %d\n", 
+				info->queue_id,info->name, msg.data);
 	}
 	num_of_thread++;
 	return NULL;
@@ -547,8 +543,6 @@ static int do_getattr(const char *path, struct stat *statit, struct fuse_file_in
 	pathname=(char *)malloc(strlen(path) + 2);
 
 	strcpy(pathname, path);
-
-	printf("GETATTR %s\n", pathname);
 
 	filetype * file_node = filetype_from_path(pathname);
 	if(file_node == NULL)
@@ -570,8 +564,6 @@ static int do_getattr(const char *path, struct stat *statit, struct fuse_file_in
 int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, 
 		struct fuse_file_info *fi, enum fuse_readdir_flags){
 	
-	printf("READDIR\n");
-
 	filler(buffer, ".", NULL, 0, 0);
 	filler(buffer, "..", NULL,0, 0);
 
@@ -580,15 +572,12 @@ int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t off
 
 	filetype* dir_node = filetype_from_path(pathname);
 
-	printf("pathname = %s\n", pathname);
-
 	if(dir_node == NULL){
 		return -ENOENT;
 	}
 	else{
 		dir_node->a_time=time(NULL);
 		for(int i = 0; i < dir_node->num_children; i++){
-			printf(":%s:\n", dir_node->children[i]->name);
 			filler(buffer, dir_node->children[i]->name, NULL, 0, 0);
 		}
 	}
@@ -596,19 +585,14 @@ int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t off
 }
 
 int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi){
-	printf("READ\n");
 	char* pathname = malloc(sizeof(path)+1);
 	strcpy(pathname, path);
 	filetype* file = filetype_from_path(pathname);
-	/* message_t msg; */
-	/* int plmt_id = 0; */
 	int pos, blk;
 	uint32_t n;
 
 	if(file == NULL)
 		return -ENOENT;
-	
-	printf("do_read path = %s, size = %zu, offset=%ld\n", path, size, offset);
 	
 	for(pos = offset; pos < file->size;){
 		// no. of bytes to be written in this block either whole block or few
@@ -618,18 +602,8 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 
 		blk = pos/block_size;
 		
-		printf("blk = %d, pos = %d, n = %d, file->size = %ld\n", blk, pos, n, file->size);
-		
 		read_block(file, blk, n);
 	
-		printf("blocks\n");
-		
-		for(int i=0; i<block_size; i++){
-			printf("%c", blocks[i]);
-		}
-
-		printf("\n");
-
 		for(int i=0; i<n; i++){
 			buf[i] = blocks[i];
 		}
@@ -643,14 +617,35 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 	return 0;
 }
 
-static int do_mkdir(const char *path, mode_t mode) {
-	printf("MKDIR\n");
-
-	int index = find_free_inode();
+int get_file_level(const char* path){
+	char* pathname = malloc(strlen(path)+2);
+	char* token = NULL;
+	int level = 0;
+	strcpy(pathname, path);
+	token = strtok(pathname, "/");
 	
+	// loop through the string to extract all other tokens
+	while(token != NULL){
+		token = strtok(NULL, "/");
+		level++;
+	}
+	
+	free(pathname);	
+	return level;
+}
+
+static int do_mkdir(const char *path, mode_t mode) {
+	int index = find_free_inode();
+	int level = 0;
+
 	if(index==-1)
 		return -ENOSPC;
 	
+	level = get_file_level(path);
+	
+	if(initial_done && level <= 1)
+		return -EROFS;
+
 	filetype* new_folder = malloc(sizeof(filetype));
 
 	char* pathname = malloc(strlen(path)+2);
@@ -658,22 +653,23 @@ static int do_mkdir(const char *path, mode_t mode) {
 
 	char* rindex = strrchr(pathname, '/');
 
-	strcpy(new_folder -> name, rindex+1);
-	strcpy(new_folder -> path, pathname);
+	strcpy(new_folder->name, rindex+1);
+	strcpy(new_folder->path, pathname);
 	
 	*rindex = '\0';
-
+	
 	if(strlen(pathname) == 0)
-	strcpy(pathname, "/");
+		strcpy(pathname, "/");
 
 	new_folder->children = NULL;
 	new_folder->num_children = 0;
 	new_folder->parent = filetype_from_path(pathname);
 	new_folder->num_links = 2;
 	new_folder->valid = 1;
+	
 	strcpy(new_folder->test, "test");
 
-	if(new_folder -> parent == NULL)
+	if(new_folder->parent == NULL)
 		return -ENOENT;
 
 	add_child(new_folder->parent, new_folder);
@@ -704,11 +700,6 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 	message_t msg;
 	strcpy(pathname, path);
 
-/* #if FDPFS_DEBUG */
-/* 	printf("plmt_id=%d\n", plmt_id); */
-/* 	printf("do_write path = %s, buffer = %s, size = %zu, offset=%ld, strlen(buf)=%ld\n", path, buf, size, offset, strlen(buf)); */
-/* #endif */
-
 	filetype * file = filetype_from_path(pathname);
 	
 	if(file == NULL)
@@ -723,29 +714,18 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		if(pos + n > file->size)
 			file->size = pos + n; 	// update file size accordingly.
 		
-		printf("blk = %d, pos = %d, n = %d\n", blk, pos, n);
 		
 		read_block(file, blk, n);
 	
-		printf("blocks\n");
-		for(int i=0; i<block_size; i++){
-			printf("%c", blocks[i]);
-		}
-		printf("\n");
-
 		msg.data = plmt_id; // Set data for the message
 		msg.size = n;
 		msg.offset = pos;
 		msg.ddir = DDIR_WRITE;
 		msg.slba = file->datablocks[blk];
 		
-		printf("buffer\n");
 		for(int i=0; i<n; i++){
-			printf("blocks --> %c ", blocks[pos+i]);
 			blocks[pos + i] = buf[i];
-			printf("buf --> %c ", buf[i]);
 		}
-		printf("\n");
 
 		msg.buffer = blocks; 
 		
@@ -758,8 +738,6 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 
 		pos += n; // update pos.
 		buf += n;
-		
-		printf("file->size = %ld\n", file->size);
 	}	
 
 	return size;
@@ -772,24 +750,32 @@ static void *fdpfs_init(struct fuse_conn_info *conn,
 	(void) conn;
 	cfg->kernel_cache = 1;
 	cfg->direct_io = 1;
-
-	/* unsigned int nruh = dev.nruh; */
 	
-	struct nvme_fdp_ruh_status_desc *ruhs = &ruh_status->ruhss[0];
-	unsigned int num_of_blocks = le64toh(ruhs->ruamw);
+	unsigned int num_of_blocks = le64toh(dev.runs) / block_size;
 	
-	printf("num_of_blocks = %u\n", num_of_blocks);
-	initialize_superblock(&spblock, num_of_blocks);
+	initialize_superblock(&dev ,&spblock, num_of_blocks);
 	root = initialize_root_directory(&spblock);
 	
+	char buffer[50];
+	for(uint16_t i=0; i<dev.maxPIDIdx_; i++){
+		sprintf(buffer, "/p%u", dev.pIDs[i].pid);
+		do_mkdir(buffer, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+	}
+	
+	initial_done = true;
 	return NULL;
 }
 
 int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
+	int level = 0; 
+	int index = -1;
+	
+	level = get_file_level(path);
+	
+	if(level<=1)
+		return -EROFS;
 
-	printf("CREATEFILE\n");
-
-	int index = find_free_inode();
+	index = find_free_inode();
 
 	if(index==-1)
 		return -ENOSPC;
@@ -827,9 +813,7 @@ int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
 	new_file->a_time = time(NULL);
 	new_file->m_time = time(NULL);
 	new_file->b_time = time(NULL);
-
 	new_file->permissions = S_IFREG | 0777;
-
 	new_file->size = 0;
 	new_file->group_id = getgid();
 	new_file->user_id = getuid();
@@ -838,14 +822,12 @@ int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
 	int free_block = 0;
 
 	for(int i = 0; i < 16; i++){
-		free_block = find_free_db();
+		free_block = find_free_db(1);
 		
 		if(free_block == -1)
 			return -ENOSPC;
-
-		printf("find free block = %d\n", free_block);
+		
 		(new_file->datablocks)[i] = free_block;
-
 	}
 	
 	new_file->blocks = 0;
@@ -856,13 +838,9 @@ int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
 int do_open(const char *path, struct fuse_file_info *fi) {
 	char * pathname = malloc(sizeof(path)+1);
 	strcpy(pathname, path);
-	filetype* file = filetype_from_path(pathname);
-
-	printf("OPEN %s\n", file->name);
-	
+	/* filetype* file = filetype_from_path(pathname); */
 	return 0;
 }
-
 
 static struct fuse_operations operations = {
 	.init		=	fdpfs_init,
@@ -886,20 +864,21 @@ static void show_help(const char *progname)
 			"\n");
 }
 
-void nvme_show_fdp_ruh_status(struct nvme_fdp_ruh_status *status)
-{
+void fdpfs_update_dev_ruh_status(struct fdpfs_dev *dev, struct nvme_fdp_ruh_status* status){
 	uint16_t nruhsd = le16toh(status->nruhsd);	
 	
-	for(unsigned int i = 0; i < nruhsd; i++) {
+	dev->maxPIDIdx_ = ruh_status->nruhsd - 1;
+
+	printf("nruhsd = %u\n", nruhsd);
+	
+	dev->pIDs = (struct placementIDs_*)malloc(dev->maxPIDIdx_*
+			sizeof(struct placementIDs_));
+	
+	for(uint16_t i=0; i<=dev->maxPIDIdx_; i++){
 		struct nvme_fdp_ruh_status_desc *ruhs = &status->ruhss[i];
-		printf("Placement Identifier %"PRIu16"; Reclaim Unit Handle Identifier %"PRIu16"\n",
-				le16toh(ruhs->pid), le16toh(ruhs->ruhid));
-		printf("  Estimated Active Reclaim Unit Time Remaining (EARUTR): %"PRIu32"\n",
-				le32toh(ruhs->earutr));
-		printf("  Reclaim Unit Available Media Writes (RUAMW): %"PRIu64"\n",
-				le64toh(ruhs->ruamw));
-		printf("\n");
-	}    
+		dev->pIDs[i].pid = le16toh(ruhs->pid);
+		dev->pIDs[i].ruhid = le16toh(ruhs->ruhid);
+	}
 }
 
 static int nvme_passthru_identify(int fd, __u32 nsid, enum nvme_identify_cns cns,
@@ -930,6 +909,7 @@ int main(int argc, char *argv[])
 	/* struct ioring_data *ld; */
 	/* struct nvme_id_ns ns; */ 
 	
+	f_out = stdout;	
 	pthread_t threads[NUM_QUEUES];
 	
 	void *log = NULL;
@@ -964,9 +944,31 @@ int main(int argc, char *argv[])
 	cfg.egid = (__u16)atoi(options.contents); 
 
 	/* Parse options */
-	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
+	if (fuse_opt_parse(&args, &options, option_spec, NULL)==-1){
 		return 1;
+	}
+	
+	if(options.debug){
+		char *ch;
+		char *debug = (char*)options.debug;
+		const struct debug_level *dl;
+		int i;
+		ch = strtok(debug, " ");
+		while (ch != NULL) {
+			int found = 0;
+			for (i = 0; debug_levels[i].name; i++) {
+            	dl = &debug_levels[i];
+            	found = !strncmp(ch, dl->name, strlen(dl->name));
+            	if (found){
+					fio_debug |= (1UL << dl->shift);
+					break;
+				}
+			}
+    		ch = strtok(NULL, " ");
+  		}
+	}
 
+	
 	/*
 	 * When --help is specified, first print our own file-system
 	 * specific help text, then signal fuse_main to show
@@ -987,9 +989,9 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}	
 	dev.fd = fd;
-#if FDPFS_DEBUG	
-	printf("open fd %d\n", fd);
-#endif
+	
+	dprint(FDPFS_FUSE, "open fd %d\n", fd);
+	
 	int namespace_id = ioctl(fd, NVME_IOCTL_ID);
     
 	if (namespace_id < 0) {
@@ -1035,6 +1037,7 @@ int main(int argc, char *argv[])
 	// n = le16toh(conf->n) + 1;
 	fdpfs_update_dev(&dev, desc);
 	
+	
 	if (!cfg.namespace_id) {
 		err = nvme_get_nsid(fd, &cfg.namespace_id);
 		if (err < 0) {
@@ -1049,7 +1052,7 @@ int main(int argc, char *argv[])
 	err = nvme_fdp_reclaim_unit_handle_status(fd, cfg.namespace_id, sizeof(hdr2), &hdr2);
 
 	if (err) {
-		printf("error\n");
+		perror("error\n");
 		goto fclose;
 	}
 	len = sizeof(struct nvme_fdp_ruh_status) + 
@@ -1070,7 +1073,7 @@ int main(int argc, char *argv[])
 
 	ruh_status = (struct nvme_fdp_ruh_status *)buf;
 	
-	/* nvme_show_fdp_ruh_status(ruh_status); */
+	fdpfs_update_dev_ruh_status(&dev, ruh_status);
 	
 	num_of_thread = dev.nruh;
 	
@@ -1098,9 +1101,8 @@ int main(int argc, char *argv[])
 
 fclose:
  	// Wait for all consumer threads to finish
-#if FDPFS_DEBUG
-	printf("fclose\n");
-#endif
+	dprint(FDPFS_FUSE, "fclose\n");
+	
 	for (int i = 0; i < NUM_QUEUES; i++) {
     	if (pthread_join(threads[i], NULL) != 0) {
 			perror("pthread_join");
@@ -1113,7 +1115,7 @@ fclose:
   	}	
 
 #if FDPFS_DEBUG
-	printf("Close file\n");
+	dprint(FDPFS_FUSE, "Close file\n");
 #endif
 	close(fd);
 	fuse_opt_free_args(&args);

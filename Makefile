@@ -6,7 +6,7 @@ LDLIBS = -lnvme -lblkid
 
 MKFS = mkfs.fdpfs
 
-CFILES := mkfs.c io_uring.c super.c
+CFILES := mkfs.c io_uring.c super.c debug.c
 
 all: $(CFILES)
 	rm -f $(MKFS)

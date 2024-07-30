@@ -13,4 +13,5 @@ if [ ! -d $MOUNT_POINT ]; then
 fi
 
 
-$BINARY -d $MOUNT_POINT
+# $BINARY -d $MOUNT_POINT 
+$BINARY -d $MOUNT_POINT --debug "iouring FUSE" 

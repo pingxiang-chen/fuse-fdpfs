@@ -1,6 +1,13 @@
 #ifndef FDPFS_H
 #define FDPFS_H
 
+#include <stdbool.h>
+
+struct placementIDs_ {
+	uint16_t pid;
+	uint16_t ruhid;
+};
+
 struct fdpfs_dev {
 	/* Device file path and basename */
 	char	*path;
@@ -21,12 +28,16 @@ struct fdpfs_dev {
 	unsigned int runs;
 	unsigned int erutl;
 	struct	nvme_fdp_ruh_desc *ruhs;
-
+	
 	/* Device file descriptor */
 	int	fd;
 
 	/* Device namespace id */
 	int	nsid;
+
+	uint16_t maxPIDIdx_;
+
+	struct placementIDs_* pIDs;
 };
 
 /* fdpfs related functions */
