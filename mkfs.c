@@ -29,6 +29,7 @@
 #include "io_uring.h"
 #include "super.h"
 #include "debug.h"
+#include "uthash.h"
 
 #ifdef FDPFS_DEBUG
 #define FDPFS_DEBUG 1
@@ -41,6 +42,8 @@
 #include <pthread.h>
 #include <mqueue.h>
 
+#define	FDP_DIR_DTYPE	2
+
 int num_of_thread = 0;
 
 bool initial_done = false;
@@ -48,6 +51,14 @@ bool initial_done = false;
 static struct fdpfs_dev dev;
 
 char* blocks;
+
+struct plmtid_pair {
+	int plmtid;	/* key */
+	int index;
+	UT_hash_handle hh;	/* makes this structure hashable */
+};
+
+struct plmtid_pair *plmtid_table = NULL;    /* important! initialize to NULL */
 
 typedef struct {
 	int data;
@@ -140,10 +151,10 @@ int find_free_inode(){
 	return -1;
 }
 
-int find_free_db(unsigned int plmt_id){
+int find_free_db(int index){
 	for (int i = 1; i < 100; i++){
-		if(spblock.data_bitmaps[plmt_id][i] == '0'){
-			spblock.data_bitmaps[plmt_id][i] = '1';
+		if(spblock.data_bitmaps[index][i] == '0'){
+			spblock.data_bitmaps[index][i] = '1';
 			return i;
 		}
 	}
@@ -213,9 +224,16 @@ filetype * filetype_from_path(char * path){
 	return NULL;
 }
 
-void read_block(filetype* file, int blk, uint32_t n){
+int find_index(unsigned int plmtid) {
+    struct plmtid_pair *s;
+	HASH_FIND_INT(plmtid_table, &plmtid, s);  /* s: output pointer */
+	return s->index;
+}
+
+
+void read_block(filetype* file, int blk, uint32_t n, int plmtid){
 	blocks = NULL;
-	int plmt_id = 0;
+	int plmt_id = plmtid;
 	message_t msg;
 	msg.data = plmt_id; // Set data for the message
 	msg.buffer = NULL; 
@@ -223,11 +241,15 @@ void read_block(filetype* file, int blk, uint32_t n){
 	msg.offset = 0;
 	msg.ddir = DDIR_READ;
 	msg.slba = file->datablocks[blk];
+	int idx = 0;
+	int which_queue = 0;
+	
+	idx = find_index(plmt_id);
+	which_queue = idx % num_of_thread;
 
-	int ret = mq_send(queue_infos[plmt_id].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
+	int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 
 	if(ret == -1){
-		perror("mq_send failure at read_block");
 		return;
 	}
 
@@ -496,7 +518,8 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
     }
 	
 	dprint(FDPFS_IO_URING, "slba = %llu, nlb = %u\n", slba, nlb);
-
+	
+	ld->dtype = FDP_DIR_DTYPE;
 	return fdpfs_nvme_uring_cmd_prep(cmd, ld, slba, nlb);
 }
 
@@ -584,12 +607,27 @@ int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t off
 	return 0;
 }
 
+unsigned int get_plmtid_from_path(const char* path){
+	char* pathname = malloc(strlen(path)+2);
+	char* token = NULL;
+	unsigned int plmtid = 0;
+	
+	strcpy(pathname, path);
+	token = strtok(pathname, "/");
+	sscanf(token,"p%u",&plmtid);	
+	free(pathname);	
+
+	return plmtid;
+}
+
+
 int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi){
 	char* pathname = malloc(sizeof(path)+1);
 	strcpy(pathname, path);
 	filetype* file = filetype_from_path(pathname);
 	int pos, blk;
 	uint32_t n;
+	int plmtid = get_plmtid_from_path(path);
 
 	if(file == NULL)
 		return -ENOENT;
@@ -602,7 +640,7 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 
 		blk = pos/block_size;
 		
-		read_block(file, blk, n);
+		read_block(file, blk, n, plmtid);
 	
 		for(int i=0; i<n; i++){
 			buf[i] = blocks[i];
@@ -696,7 +734,6 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 	char * pathname = malloc(sizeof(path)+1);
 	int pos, blk;
 	uint32_t n;
-
 	message_t msg;
 	strcpy(pathname, path);
 
@@ -705,6 +742,8 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 	if(file == NULL)
 		return -ENOENT;
 	
+	plmt_id = get_plmtid_from_path(path);
+
 	for(pos = offset; pos < offset + size;){
 		// no. of bytes to be written in this block either whole block or few
 		n = MIN(block_size - pos % block_size, offset + size - pos);
@@ -715,7 +754,7 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 			file->size = pos + n; 	// update file size accordingly.
 		
 		
-		read_block(file, blk, n);
+		read_block(file, blk, n, plmt_id);
 	
 		msg.data = plmt_id; // Set data for the message
 		msg.size = n;
@@ -729,7 +768,10 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 
 		msg.buffer = blocks; 
 		
-		int ret = mq_send(queue_infos[plmt_id].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
+		int idx = find_index(plmt_id);
+		int which_queue = idx % num_of_thread;
+		
+		int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 		
 		if(ret == -1){
 			perror("mq_send failure at do_write");
@@ -741,6 +783,14 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 	}	
 
 	return size;
+}
+
+void add_to_plmtid_table(int plmtid, int index) {
+	struct plmtid_pair *s;
+	s = malloc(sizeof *s);
+	s->plmtid = plmtid;
+	s->index =  index;
+	HASH_ADD_INT(plmtid_table, plmtid, s);  /* id: name of key field */
 }
 
 static void *fdpfs_init(struct fuse_conn_info *conn,
@@ -757,8 +807,10 @@ static void *fdpfs_init(struct fuse_conn_info *conn,
 	root = initialize_root_directory(&spblock);
 	
 	char buffer[50];
+	
 	for(uint16_t i=0; i<dev.maxPIDIdx_; i++){
 		sprintf(buffer, "/p%u", dev.pIDs[i].pid);
+		add_to_plmtid_table((int)dev.pIDs[i].pid, i);	
 		do_mkdir(buffer, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 	}
 	
@@ -769,6 +821,7 @@ static void *fdpfs_init(struct fuse_conn_info *conn,
 int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
 	int level = 0; 
 	int index = -1;
+	unsigned int plmtid;
 	
 	level = get_file_level(path);
 	
@@ -776,6 +829,8 @@ int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
 		return -EROFS;
 
 	index = find_free_inode();
+	plmtid = get_plmtid_from_path(path);
+	printf("plmtid = %u\n", plmtid); 
 
 	if(index==-1)
 		return -ENOSPC;
@@ -806,7 +861,6 @@ int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
 
 	add_child(new_file->parent, new_file);
 
-	//new_file -> type = malloc(10);
 	strcpy(new_file -> type, "file");
 
 	new_file->c_time = time(NULL);
@@ -820,9 +874,10 @@ int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
 	new_file->number = index;
 
 	int free_block = 0;
+	int bitmaps_idx = find_index(plmtid);
 
 	for(int i = 0; i < 16; i++){
-		free_block = find_free_db(1);
+		free_block = find_free_db(bitmaps_idx);
 		
 		if(free_block == -1)
 			return -ENOSPC;
