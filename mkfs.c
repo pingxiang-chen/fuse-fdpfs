@@ -83,7 +83,6 @@ const struct debug_level debug_levels[] = {
 
 unsigned long fio_debug = 0;
 
-/* #define NUM_QUEUES 8  // Number of message queues to create */
 #define MIN(a,b)	(a < b ? a : b)
 #define BLKSIZE 4096
 
@@ -93,8 +92,6 @@ typedef struct {
 	int queue_id;
   	char name[20]; // Queue name for identification (optional)	
 } queue_info_t;
-
-/* queue_info_t queue_infos[NUM_QUEUES]; */
 
 queue_info_t * queue_infos;
 
@@ -249,13 +246,6 @@ void read_block(filetype* file, int blk, uint32_t n, int plmtid){
 	idx = find_index(plmt_id);
 	which_queue = idx % num_of_thread;
 	
-	printf("read block blk=%d\n", blk);
-	printf("plmt_id = %d\n", plmt_id);
-	printf("which_queue = %d\n", which_queue);
-	printf("idx = %d\n", idx);
-	printf("num_of_thread = %d\n", num_of_thread);
-
-
 	int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 
 	if(ret == -1){
@@ -762,9 +752,6 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		if(pos + n > file->size)
 			file->size = pos + n; 	// update file size accordingly.
 		
-		
-		printf("read plmt_id %d\n", plmt_id);
-		
 		read_block(file, blk, n, plmt_id);
 	
 		msg.data = plmt_id; // Set data for the message
@@ -776,19 +763,11 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		for(int i=0; i<n; i++){
 			blocks[pos + i] = buf[i];
 		}
-	
-
-		printf("after read\n");
 		
 		msg.buffer = blocks; 
 		
 		int idx = find_index(plmt_id);
 		int which_queue = idx % num_of_thread;
-		
-		printf("which_queue = %d\n", which_queue);
-		printf("idx = %d\n", idx);
-		printf("num_of_thread = %d\n", num_of_thread);
-
 		int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 		
 		if(ret == -1){
@@ -848,7 +827,6 @@ int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
 
 	index = find_free_inode();
 	plmtid = get_plmtid_from_path(path);
-	printf("plmtid = %u\n", plmtid); 
 
 	if(index==-1)
 		return -ENOSPC;
