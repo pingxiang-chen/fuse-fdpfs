@@ -77,3 +77,22 @@ ls fuse_mount
 
 You should be able to see the following:
 ![FDPFS directories](images/fdpfs-directorys.png "FDPFS")
+
+You can try to do simple write based on the placment identifier expose by FDPFS
+
+```shell
+echo "a" >> p1/a
+```
+
+```shell
+cat p1/a
+```
+
+You should see the following:
+![FDPFS working](images/fdpfs-working.png "FDPFS working")
+
+When you check with nvme-cli, you should be able to see there are 2 bytes written to placement identifier 1.
+
+```shell
+sudo nvme fdp status /dev/nvme1n1 | grep "Placement \| Media"
+```
