@@ -83,7 +83,7 @@ const struct debug_level debug_levels[] = {
 
 unsigned long fio_debug = 0;
 
-#define NUM_QUEUES 2  // Number of message queues to create
+/* #define NUM_QUEUES 8  // Number of message queues to create */
 #define MIN(a,b)	(a < b ? a : b)
 #define BLKSIZE 4096
 
@@ -94,7 +94,9 @@ typedef struct {
   	char name[20]; // Queue name for identification (optional)	
 } queue_info_t;
 
-queue_info_t queue_infos[NUM_QUEUES];
+/* queue_info_t queue_infos[NUM_QUEUES]; */
+
+queue_info_t * queue_infos;
 
 /* This is x86 specific */
 #define read_barrier()  __asm__ __volatile__("":::"memory")
@@ -246,6 +248,13 @@ void read_block(filetype* file, int blk, uint32_t n, int plmtid){
 	
 	idx = find_index(plmt_id);
 	which_queue = idx % num_of_thread;
+	
+	printf("read block blk=%d\n", blk);
+	printf("plmt_id = %d\n", plmt_id);
+	printf("which_queue = %d\n", which_queue);
+	printf("idx = %d\n", idx);
+	printf("num_of_thread = %d\n", num_of_thread);
+
 
 	int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 
@@ -754,6 +763,8 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 			file->size = pos + n; 	// update file size accordingly.
 		
 		
+		printf("read plmt_id %d\n", plmt_id);
+		
 		read_block(file, blk, n, plmt_id);
 	
 		msg.data = plmt_id; // Set data for the message
@@ -765,12 +776,19 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		for(int i=0; i<n; i++){
 			blocks[pos + i] = buf[i];
 		}
+	
 
+		printf("after read\n");
+		
 		msg.buffer = blocks; 
 		
 		int idx = find_index(plmt_id);
 		int which_queue = idx % num_of_thread;
 		
+		printf("which_queue = %d\n", which_queue);
+		printf("idx = %d\n", idx);
+		printf("num_of_thread = %d\n", num_of_thread);
+
 		int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 		
 		if(ret == -1){
@@ -960,12 +978,13 @@ int main(int argc, char *argv[])
 	struct nvme_fdp_config_desc* desc;
 	struct nvme_fdp_config_log *conf;
 	struct nvme_id_ctrl ctrl;	
+	/* pthread_t threads[8]; */
+	
 	/* struct nvme_nvm_id_ns nvm_ns; */
 	/* struct ioring_data *ld; */
 	/* struct nvme_id_ns ns; */ 
 	
 	f_out = stdout;	
-	pthread_t threads[NUM_QUEUES];
 	
 	void *log = NULL;
 	int err;
@@ -1131,6 +1150,10 @@ int main(int argc, char *argv[])
 	fdpfs_update_dev_ruh_status(&dev, ruh_status);
 	
 	num_of_thread = dev.nruh;
+
+	queue_infos = (queue_info_t*)malloc(num_of_thread * sizeof(queue_info_t));
+
+	pthread_t threads[8];
 	
 	// Create message queues
 	for (int i = 0; i < num_of_thread; i++) {
@@ -1158,13 +1181,13 @@ fclose:
  	// Wait for all consumer threads to finish
 	dprint(FDPFS_FUSE, "fclose\n");
 	
-	for (int i = 0; i < NUM_QUEUES; i++) {
+	for (int i = 0; i < num_of_thread; i++) {
     	if (pthread_join(threads[i], NULL) != 0) {
 			perror("pthread_join");
 			exit(1);
 		}
 	} 	
-	for (int i = 0; i < NUM_QUEUES; i++) {
+	for (int i = 0; i < num_of_thread; i++) {
 		mq_close(queue_infos[i].queue_id);
 		mq_unlink(queue_infos[i].name); // Remove the queue from the system
   	}	
