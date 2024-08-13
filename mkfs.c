@@ -78,6 +78,10 @@ const struct debug_level debug_levels[] = {
 	  .help = "FUSE logging",
 	  .shift = FDPFS_FUSE,
 	},
+	{ .name = "device",
+	  .help = "FDP Device logging",
+	  .shift = FDPFS_DEVICE,
+	},
 	{ .name = NULL, },
 };
 
@@ -152,8 +156,8 @@ int find_free_inode(){
 
 int find_free_db(int index){
 	for (int i = 1; i < 100; i++){
-		if(spblock.data_bitmaps[index][i] == '0'){
-			spblock.data_bitmaps[index][i] = '1';
+		if(spblock.data_bitmap[i] == '0'){
+			spblock.data_bitmap[i] = '1';
 			return i;
 		}
 	}
@@ -256,6 +260,7 @@ void read_block(filetype* file, int blk, uint32_t n, int plmtid){
 	}
 }
 
+
 void tree_to_array(filetype* queue, int* front, int* rear, int* index){
 	if(rear < front)
 		return;
@@ -314,15 +319,15 @@ void fdpfs_close_dev(struct fdpfs_dev *dev){
 }
 
 void print_fdp_info(struct fdpfs_dev *dev){
-	printf("Number of Reclaim Groups: %u\n", dev->nrg);
-	printf("Number of Reclaim Unit Handles: %u\n", dev->nruh);
-	printf("Number of Namespaces Supported: %u\n", dev->nnss);
-	printf("Reclaim Unit Nominal Size: %u\n", dev->runs);
-	printf("Estimated Reclaim Unit Time Limit: %u\n", dev->erutl);
-	printf("Reclaim Unit Handle List:\n");
+	dprint(FDPFS_DEVICE,	"Number of Reclaim Groups: %u\n", dev->nrg);
+	dprint(FDPFS_DEVICE,	"Number of Reclaim Unit Handles: %u\n", dev->nruh);
+	dprint(FDPFS_DEVICE,	"Number of Namespaces Supported: %u\n", dev->nnss);
+	dprint(FDPFS_DEVICE,	"Reclaim Unit Nominal Size: %u\n", dev->runs);
+	dprint(FDPFS_DEVICE,	"Estimated Reclaim Unit Time Limit: %u\n", dev->erutl);
+	dprint(FDPFS_DEVICE,	"Reclaim Unit Handle List:\n");
 	for (int j = 0; j < dev->nruh; j++) {
 		struct nvme_fdp_ruh_desc *ruh = &dev->ruhs[j];
-		printf("  [%d]: %s\n", j, ruh->ruht == NVME_FDP_RUHT_INITIALLY_ISOLATED ? "Initially Isolated" : "Persistently Isolated");
+		dprint(FDPFS_DEVICE,"  [%d]: %s\n", j, ruh->ruht == NVME_FDP_RUHT_INITIALLY_ISOLATED ? "Initially Isolated" : "Persistently Isolated");
 	}
 }
 
@@ -344,6 +349,8 @@ void fdpfs_update_dev(struct fdpfs_dev *dev, struct nvme_fdp_config_desc* desc){
 
 	/* Reclaim Unit Handle List */
 	dev->ruhs = desc->ruhs;
+
+	print_fdp_info(dev);
 }
 
 int fdpfs_open_dev(struct fdpfs_dev *dev, bool check_overwrite){
@@ -389,7 +396,7 @@ char* read_from_cq(struct ioring_data *ld) {
 		cqe = &cring->cqes[head & *ld->cq_ring.ring_mask];
 		tmp = (struct ioring_data*)cqe->user_data;
 
-		dprint(FDPFS_IO_URING, "read_from_cq, nsid = %d\n", tmp->nsid);
+		dprint(FDPFS_IO_URING, "read_from_cq, nsid = %d, orig_buffer = %c, tmp->dspec = %d\n", tmp->nsid, tmp->orig_buffer[0], tmp->dspec);
 		if (cqe->res < 0)
 			fprintf(stderr, "Error: %s\n", strerror(abs(cqe->res)));
 		head++;
@@ -479,8 +486,9 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 	__u64 slba;
 	__u32 nlb;
 
-#if FDPFS_DEBUG
 	dprint(FDPFS_IO_URING, "submit_to_sq\n");
+
+#if FDPFS_DEBUG
 	dprint(FDPFS_IO_URING, "msg.ddir = %d\n", msg.ddir);
 	dprint(FDPFS_IO_URING, "msg.size = %zu\n", msg.size); 
 	dprint(FDPFS_IO_URING, "msg.offset = %ld\n", msg.offset);
@@ -507,10 +515,13 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 	switch (msg.ddir) {
     	case DDIR_READ:
 			ld->ddir = DDIR_READ;
+			ld->dtype = 0;
+			ld->dspec = 0;
 			break;
     	case DDIR_WRITE:
         	ld->ddir = DDIR_WRITE;
 			ld->orig_buffer = (char*)msg.buffer;
+			ld->dtype = FDP_DIR_DTYPE;
 			break;
     	default:
         	return -ENOTSUP;
@@ -518,7 +529,6 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 	
 	dprint(FDPFS_IO_URING, "slba = %llu, nlb = %u\n", slba, nlb);
 	
-	ld->dtype = FDP_DIR_DTYPE;
 	return fdpfs_nvme_uring_cmd_prep(cmd, ld, slba, nlb);
 }
 
@@ -552,9 +562,9 @@ void *receiver(void *arg){
 		submit_to_sq(&dev, ld, msg);
 		fdpfs_ioring_queue(ld);
 		blocks = read_from_cq(ld);
-		
 		dprint(FDPFS_IO_URING, "Queue id: %d, name: %s processing message: %d\n", 
 				info->queue_id,info->name, msg.data);
+		dprint(FDPFS_IO_URING, "blocks[0] = %c\n", blocks[0]); 
 	}
 	num_of_thread++;
 	return NULL;
@@ -640,7 +650,7 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 		blk = pos/block_size;
 		
 		read_block(file, blk, n, plmtid);
-	
+		
 		for(int i=0; i<n; i++){
 			buf[i] = blocks[i];
 		}
@@ -778,7 +788,7 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		pos += n; // update pos.
 		buf += n;
 	}	
-
+	
 	return size;
 }
 
@@ -799,7 +809,9 @@ static void *fdpfs_init(struct fuse_conn_info *conn,
 	cfg->direct_io = 1;
 	
 	unsigned int num_of_blocks = le64toh(dev.runs) / block_size;
-	
+	num_of_blocks = dev.maxPIDIdx_ * num_of_blocks;
+
+	dprint(FDPFS_DEVICE, "num_of_blocks = %u\n", num_of_blocks);
 	initialize_superblock(&dev ,&spblock, num_of_blocks);
 	root = initialize_root_directory(&spblock);
 	
@@ -916,12 +928,10 @@ static void show_help(const char *progname)
 }
 
 void fdpfs_update_dev_ruh_status(struct fdpfs_dev *dev, struct nvme_fdp_ruh_status* status){
-	uint16_t nruhsd = le16toh(status->nruhsd);	
+	/* uint16_t nruhsd = le16toh(status->nruhsd); */	
 	
 	dev->maxPIDIdx_ = ruh_status->nruhsd - 1;
 
-	printf("nruhsd = %u\n", nruhsd);
-	
 	dev->pIDs = (struct placementIDs_*)malloc(dev->maxPIDIdx_*
 			sizeof(struct placementIDs_));
 	

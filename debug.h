@@ -1,6 +1,7 @@
 enum {
 	FDPFS_IO_URING = 0,
 	FDPFS_FUSE,
+	FDPFS_DEVICE,
 	FDPFS_DEBUG_MAX,
 };
 

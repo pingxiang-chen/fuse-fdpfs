@@ -14,4 +14,4 @@ fi
 
 
 # $BINARY -d $MOUNT_POINT 
-$BINARY -d $MOUNT_POINT --debug "iouring FUSE" 
+$BINARY -d $MOUNT_POINT --debug "iouring FUSE device" 

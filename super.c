@@ -3,13 +3,9 @@
 void initialize_superblock(struct fdpfs_dev* dev, superblock* spblock, unsigned int num_of_blocks){
 	char* data_bitmap;
 	
-	spblock->data_bitmaps = malloc(dev->maxPIDIdx_*sizeof(char*));
-
-	for(uint16_t i=0; i<=dev->maxPIDIdx_; i++){ 
-		data_bitmap = malloc(num_of_blocks*sizeof(char));
-		memset(data_bitmap, '0', num_of_blocks*sizeof(char));
-		spblock->data_bitmaps[i] = data_bitmap;
-	}
+	data_bitmap = malloc(num_of_blocks*sizeof(char));
+	memset(data_bitmap, '0', num_of_blocks*sizeof(char));
+	spblock->data_bitmap = data_bitmap;
 	
 	memset(spblock->inode_bitmap, '0', 100*sizeof(char));
 }
