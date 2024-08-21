@@ -9,6 +9,7 @@
 #include "fdpfs.h"
 
 #define block_size 4096
+#define lba_shift 12
 
 typedef struct superblock_t {
 	char* data_bitmap;	// array of data block numbers that are available

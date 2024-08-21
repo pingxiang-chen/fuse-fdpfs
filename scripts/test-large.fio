@@ -1,12 +1,13 @@
 [global]
 name=fio-seq-write
-filename=fio-seq-write
+filename=fio-seq-write-large
 rw=write
 bs=4K
-direct=0
+direct=1
 numjobs=1
 time_based
-directory=./fuse_mount/0
+directory=./fuse_mount/p0
+buffer_pattern="large"
 
 [file1]
 size=8K

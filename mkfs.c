@@ -25,6 +25,7 @@
 #include <sys/prctl.h>
 #include <byteswap.h>
 #include <endian.h>
+#include <sys/types.h>
 #include "fdpfs.h"
 #include "io_uring.h"
 #include "super.h"
@@ -47,6 +48,7 @@
 int num_of_thread = 0;
 
 bool initial_done = false;
+bool write_done = true;
 
 static struct fdpfs_dev dev;
 
@@ -235,7 +237,7 @@ int find_index(unsigned int plmtid) {
 
 
 void read_block(filetype* file, int blk, uint32_t n, int plmtid){
-	blocks = NULL;
+	printf("read_block %d\n", blk);
 	int plmt_id = plmtid;
 	message_t msg;
 	msg.data = plmt_id; // Set data for the message
@@ -255,9 +257,18 @@ void read_block(filetype* file, int blk, uint32_t n, int plmtid){
 	if(ret == -1){
 		return;
 	}
+	
+	/* while(!done){ */
+	/* } */
 
 	while(blocks==NULL){
 	}
+
+	/* for(int i=0; i<n; i++){ */
+	/* 	printf("blocks[%d]: %c ", i, blocks[i]); */ 
+	/* } */
+
+	/* printf("\n"); */
 }
 
 
@@ -377,13 +388,14 @@ err:
  * */
 
 char* read_from_cq(struct ioring_data *ld) {
-    struct io_cq_ring *cring = &ld->cq_ring;
+	struct io_cq_ring *cring = &ld->cq_ring;
     struct io_uring_cqe *cqe;
     unsigned head = 0;
 	head = *cring->head;
 	struct ioring_data* tmp;
 
     do {
+		pid_t tid = gettid();
 		read_barrier();
 		/*
 		 * Remember, this is a ring buffer. If head == tail, it means that the
@@ -396,10 +408,16 @@ char* read_from_cq(struct ioring_data *ld) {
 		cqe = &cring->cqes[head & *ld->cq_ring.ring_mask];
 		tmp = (struct ioring_data*)cqe->user_data;
 
-		dprint(FDPFS_IO_URING, "read_from_cq, nsid = %d, orig_buffer = %c, tmp->dspec = %d\n", tmp->nsid, tmp->orig_buffer[0], tmp->dspec);
+		dprint(FDPFS_IO_URING, "read_from_cq, pid = %d, nsid = %d, tmp->dspec = %d\n", tid, tmp->nsid, tmp->dspec);
 		if (cqe->res < 0)
 			fprintf(stderr, "Error: %s\n", strerror(abs(cqe->res)));
 		head++;
+		
+		/* for(int i=0; i<4096; i++){ */
+		/* 	printf("orig_buffer[%d]: %c ", i, ld->orig_buffer[i]); */ 
+		/* } */
+		/* printf("\n"); */
+
 	} while (1);
     
 	*cring->head = head;
@@ -429,8 +447,8 @@ int fdpfs_nvme_uring_cmd_prep(struct nvme_uring_cmd *cmd, struct ioring_data *ld
 	cmd->cdw13 = ld->dspec << 16;
 	cmd->nsid = ld->nsid;
 	cmd->addr = (__u64)(uintptr_t)ld->orig_buffer;
-	cmd->data_len = ld->orig_buffer_size;
-	
+	/* cmd->data_len = ld->orig_buffer_size; */
+	cmd->data_len = (nlb + 1)*block_size;	
 	dprint(FDPFS_IO_URING, "fdpfs_nvme_uring_cmd_prep slba = %llu, nlb = %u, cmd->opcode = %u \n", 
 			slba, nlb, cmd->opcode);
 	dprint(FDPFS_IO_URING, "fdpfs_nvme_uring_cmd_prep ld->dspec	= %u, ld->dtype = %u\n", 
@@ -488,6 +506,9 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 
 	dprint(FDPFS_IO_URING, "submit_to_sq\n");
 
+	if(msg.size <=0)
+		return -EIO;
+
 #if FDPFS_DEBUG
 	dprint(FDPFS_IO_URING, "msg.ddir = %d\n", msg.ddir);
 	dprint(FDPFS_IO_URING, "msg.size = %zu\n", msg.size); 
@@ -503,20 +524,18 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 	cmd = (struct nvme_uring_cmd *)sqe->cmd;
 	ld->nsid = dev->nsid;
 	ld->index = index;
-	
-	/* slba = msg.slba; */
-	/* nlb = 1; */	
-	
 	slba = msg.slba;
-	nlb = (msg.size % block_size == 0) ?  msg.size / block_size : msg.size / block_size + 1;
-	ld->orig_buffer_size = nlb * block_size; 
-	ld->orig_buffer = malloc(ld->orig_buffer_size); 
+	nlb = (msg.size % block_size == 0) ?  msg.size / block_size -1 : msg.size / block_size;
+	/* ld->orig_buffer_size = (nlb + 1) * block_size; */
+	printf("orig_buffer_size = %zu\n", ld->orig_buffer_size);
+	/* ld->orig_buffer = malloc(ld->orig_buffer_size); */
 	
 	switch (msg.ddir) {
     	case DDIR_READ:
 			ld->ddir = DDIR_READ;
 			ld->dtype = 0;
 			ld->dspec = 0;
+			/* nlb += 1; */
 			break;
     	case DDIR_WRITE:
         	ld->ddir = DDIR_WRITE;
@@ -538,8 +557,10 @@ void *receiver(void *arg){
 	ld = malloc(sizeof(*ld));
 	queue_info_t *info = (queue_info_t *)arg;
 	
-	dprint(FDPFS_IO_URING, "Initilize Queue id: %d, name: %s \n", 
-			info->queue_id, info->name);
+	pid_t tid = gettid();
+
+	dprint(FDPFS_IO_URING, "Initilize Queue id: %d, name: %s, pid: %d\n", 
+			info->queue_id, info->name, tid);
     
 	if(!ld){
 		perror("malloc");
@@ -553,19 +574,33 @@ void *receiver(void *arg){
 
 	dprint(FDPFS_IO_URING, "io_uring_queue_init success\n");
 
+	ld->orig_buffer_size = (4 + 1) * block_size;
+	printf("malloc orig_buffer orig_buffer_size = %zu\n", ld->orig_buffer_size);
+	ld->orig_buffer = malloc(ld->orig_buffer_size);
+	
+
 	while (1) {
 		int ret = mq_receive(info->queue_id, (char *) &msg, sizeof(message_t), NULL);
 		if (ret == -1) {
 			perror("mq_receive");
 			exit(1);
 		}
+		printf("receive the message pid = %d, ddir = %d\n", tid, msg.ddir); 
+		
+		if(msg.ddir==DDIR_WRITE) 
+			write_done = false;
+		
 		submit_to_sq(&dev, ld, msg);
 		fdpfs_ioring_queue(ld);
 		blocks = read_from_cq(ld);
-		dprint(FDPFS_IO_URING, "Queue id: %d, name: %s processing message: %d\n", 
-				info->queue_id,info->name, msg.data);
-		dprint(FDPFS_IO_URING, "blocks[0] = %c\n", blocks[0]); 
+		
+		if(msg.ddir==DDIR_WRITE) 
+			write_done = true;
+		
+		dprint(FDPFS_IO_URING, "Queue id: %d, name: %s processing message: %d, msg.ddir=%d\n", 
+				info->queue_id,info->name, msg.data, msg.ddir);
 	}
+
 	num_of_thread++;
 	return NULL;
 }
@@ -637,9 +672,12 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 	int pos, blk;
 	uint32_t n;
 	int plmtid = get_plmtid_from_path(path);
+	int total_bytes = 0;
 
 	if(file == NULL)
 		return -ENOENT;
+	
+	dprint(FDPFS_FUSE, "do_read: %s, size: %zu, offset: %ld\n", path, size, offset);
 	
 	for(pos = offset; pos < file->size;){
 		// no. of bytes to be written in this block either whole block or few
@@ -649,19 +687,25 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 
 		blk = pos/block_size;
 		
+		blocks = NULL;
+		
+		while(!write_done){
+		
+		}
+
 		read_block(file, blk, n, plmtid);
 		
-		for(int i=0; i<n; i++){
+		for(int i=pos; i<pos+n; i++){
 			buf[i] = blocks[i];
+			/* printf("buf[%d]: %c ", i, buf[i]); */ 
 		}
 
 		pos += n; // update pos.
-		buf += n;
+		total_bytes += n;
 		
-		return n;
 	}	
-
-	return 0;
+	
+	return total_bytes;
 }
 
 int get_file_level(const char* path){
@@ -745,9 +789,11 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 	uint32_t n;
 	message_t msg;
 	strcpy(pathname, path);
-
+	pid_t tid = gettid();
 	filetype * file = filetype_from_path(pathname);
-	
+
+	dprint(FDPFS_FUSE, "do_write: %s, size: %zu, offset: %ld\n", path, size, offset);
+
 	if(file == NULL)
 		return -ENOENT;
 	
@@ -758,18 +804,21 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		n = MIN(block_size - pos % block_size, offset + size - pos);
 
 		blk = pos/block_size;
-
+	
 		if(pos + n > file->size)
 			file->size = pos + n; 	// update file size accordingly.
 		
+
+		blocks = NULL;
 		read_block(file, blk, n, plmt_id);
-	
+
 		msg.data = plmt_id; // Set data for the message
 		msg.size = n;
 		msg.offset = pos;
 		msg.ddir = DDIR_WRITE;
 		msg.slba = file->datablocks[blk];
 		
+
 		for(int i=0; i<n; i++){
 			blocks[pos + i] = buf[i];
 		}
@@ -778,6 +827,9 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		
 		int idx = find_index(plmt_id);
 		int which_queue = idx % num_of_thread;
+		
+		printf("write one block pid = %d\n", tid);
+		printf("file->datablocks[%d] = %d\n", blk, file->datablocks[blk]);
 		int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 		
 		if(ret == -1){
@@ -787,6 +839,13 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 
 		pos += n; // update pos.
 		buf += n;
+	
+		printf("write done done = %d\n", write_done);
+		while(!write_done){
+			printf("write not done\n");
+		}
+		
+		printf("for loop done\n");
 	}	
 	
 	return size;
