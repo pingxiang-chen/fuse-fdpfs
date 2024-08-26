@@ -1,0 +1,14 @@
+[global]
+name=fio-seq-write
+filename=fio-seq-write-huge
+rw=write
+bs=4K
+direct=1
+numjobs=1
+time_based
+directory=./fuse_mount/p0
+buffer_pattern="huge"
+
+[file1]
+size=16K
+iodepth=1

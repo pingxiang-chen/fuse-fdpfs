@@ -48,7 +48,7 @@
 int num_of_thread = 0;
 
 bool initial_done = false;
-/* bool write_done = true; */
+bool write_done = true;
 
 static struct fdpfs_dev dev;
 
@@ -234,6 +234,42 @@ int find_index(unsigned int plmtid) {
 	HASH_FIND_INT(plmtid_table, &plmtid, s);  /* s: output pointer */
 	return s->index;
 }
+
+
+/* void read_block(filetype* file, int blk, uint32_t n, int plmtid){ */
+/* 	printf("read_block %d\n", blk); */
+/* 	int plmt_id = plmtid; */
+/* 	message_t msg; */
+/* 	msg.data = plmt_id; // Set data for the message */
+/* 	msg.buffer = NULL; */ 
+/* 	msg.size = n; */
+/* 	msg.offset = 0; */
+/* 	msg.ddir = DDIR_READ; */
+/* 	msg.slba = file->datablocks[blk]; */
+/* 	int idx = 0; */
+/* 	int which_queue = 0; */
+	
+/* 	idx = find_index(plmt_id); */
+/* 	which_queue = idx % num_of_thread; */
+	
+/* 	int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message */
+
+/* 	if(ret == -1){ */
+/* 		return; */
+/* 	} */
+	
+/* 	/1* while(!done){ *1/ */
+/* 	/1* } *1/ */
+
+/* 	while(blocks==NULL){ */
+/* 	} */
+
+/* 	/1* for(int i=0; i<n; i++){ *1/ */
+/* 	/1* 	printf("blocks[%d]: %c ", i, blocks[i]); *1/ */ 
+/* 	/1* } *1/ */
+
+/* 	/1* printf("\n"); *1/ */
+/* } */
 
 
 void tree_to_array(filetype* queue, int* front, int* rear, int* index){
@@ -551,8 +587,8 @@ void *receiver(void *arg){
 		}
 		printf("receive the message pid = %d, ddir = %d\n", tid, msg.ddir); 
 		
-		/* if(msg.ddir==DDIR_WRITE) */ 
-		/* 	write_done = false; */
+		if(msg.ddir==DDIR_WRITE) 
+			write_done = false;
 		
 		submit_to_sq(&dev, ld, msg);
 		fdpfs_ioring_queue(ld);
@@ -563,8 +599,8 @@ void *receiver(void *arg){
 		/* } */
 		/* printf("\n"); */
 
-		/* if(msg.ddir==DDIR_WRITE) */ 
-		/* 	write_done = true; */
+		if(msg.ddir==DDIR_WRITE) 
+			write_done = true;
 		
 		dprint(FDPFS_IO_URING, "Queue id: %d, name: %s processing message: %d, msg.ddir=%d\n", 
 				info->queue_id,info->name, msg.data, msg.ddir);
@@ -584,15 +620,15 @@ static int do_getattr(const char *path, struct stat *statit, struct fuse_file_in
 	if(file_node == NULL)
 		return -ENOENT;
 
-	statit->st_uid = file_node->user_id; 
-	statit->st_gid = file_node->group_id; 
-	statit->st_atime = file_node->a_time; 
-	statit->st_mtime = file_node->m_time; 
-	statit->st_ctime = file_node->c_time;
-	statit->st_mode = file_node->permissions;
-	statit->st_nlink = file_node->num_links + file_node -> num_children;
-	statit->st_size = file_node->size;
-	statit->st_blocks = file_node->blocks;
+	statit->st_uid = file_node -> user_id; 
+	statit->st_gid = file_node -> group_id; 
+	statit->st_atime = file_node -> a_time; 
+	statit->st_mtime = file_node -> m_time; 
+	statit->st_ctime = file_node -> c_time;
+	statit->st_mode = file_node -> permissions;
+	statit->st_nlink = file_node -> num_links + file_node -> num_children;
+	statit->st_size = file_node -> size;
+	statit->st_blocks = file_node -> blocks;
 
 	return 0;
 }
@@ -642,6 +678,7 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 	uint32_t n;
 	int plmtid = get_plmtid_from_path(path);
 	int total_bytes = 0;
+	
 	message_t msg;
 	int idx = 0;
 	int which_queue = 0;
@@ -651,12 +688,15 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 	
 	dprint(FDPFS_FUSE, "do_read: %s, size: %zu, offset: %ld\n", path, size, offset);
 	
-	
-	size = MIN(size, file->size - offset);
-	
-	for(pos = offset; pos < offset + size;){
-		/* printf("pos = %d, file->size = %ld, size = %lu, total_bytes = %u\n", pos, file->size, size, total_bytes); */
+	for(pos = offset; pos < file->size;){
+		// no. of bytes to be written in this block either whole block or few
+		printf("pos = %d, file->size = %ld, size = %lu, total_bytes = %u\n", pos, file->size, size, total_bytes);
+
+		blocks = NULL;
+		
 		n = MIN(block_size - pos % block_size, offset + size - pos);
+		n = MIN(n, file->size);
+		
 		blk = pos/block_size;
 		msg.data = plmtid; // Set data for the message
 		msg.buffer = NULL; 
@@ -666,7 +706,6 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 		msg.size = n;
 		idx = find_index(plmtid);
 		which_queue = idx % num_of_thread;
-		blocks = NULL;
 		
 		int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 		
@@ -677,16 +716,23 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 		while(blocks==NULL){
 		
 		}
+
+		/* read_block(file, blk, n, plmtid); */
 		
-		for(int i=0; i<n; i++){
-			buf[i] = blocks[i];
+		for(int i=pos; i<pos+n; i++){
+			buf[i] = blocks[i-pos];
+			/* printf("blocks[%d]: %c ", i, blocks[i]); */ 
 		}
 		
-		pos += n;
-		buf += n;
+		for(int i=0; i<4096; i++){
+			/* buf[i] = blocks[i]; */
+			/* printf("bottom blocks[%d]: %c ", i, blocks[i]); */ 
+		}
+		pos += n; // update pos.
 		total_bytes += n;
-	}
-
+		
+	}	
+	
 	return total_bytes;
 }
 
@@ -771,12 +817,12 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 	uint32_t n;
 	message_t msg;
 	strcpy(pathname, path);
-	/* pid_t tid = gettid(); */
+	pid_t tid = gettid();
 	filetype * file = filetype_from_path(pathname);
 	int idx = find_index(plmt_id);
 	int which_queue = idx % num_of_thread;
 		
-	dprint(FDPFS_FUSE, "pid = %d, do_write: %s, size: %zu, offset: %ld\n", tid, path, size, offset);
+	dprint(FDPFS_FUSE, "do_write: %s, size: %zu, offset: %ld\n", path, size, offset);
 
 	if(file == NULL)
 		return -ENOENT;
@@ -808,13 +854,17 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		
 		}
 
-		printf("read block %d\n", file->datablocks[blk]);
+	
+		/* printf("read block %d\n", file->datablocks[blk]); */
 
-		/* for(int i=0; i<n; i++){ */
-		/* 	printf("blocks[%d]: %c \n", i, blocks[i]); */
-		/* } */	
+		for(int i=0; i<n; i++){
+			printf("blocks[%d]: %c", i, blocks[i]);
+		}
 		
-		/* printf("\n"); */
+		printf("\n");
+
+		// no. of bytes to be written in this block either whole block or few
+		/* n = MIN(block_size - pos % block_size, offset + size - pos); */
 
 		blk = pos/block_size;
 	
@@ -827,13 +877,15 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		msg.ddir = DDIR_WRITE;
 		msg.slba = file->datablocks[blk];
 		
+
 		for(int i=0; i<n; i++){
-			blocks[pos % block_size + i] = buf[i];
+			blocks[pos + i] = buf[i];
 		}
 		
 		msg.buffer = blocks; 
 		
-		/* printf("file->datablocks[%d] = %d\n", blk, file->datablocks[blk]); */
+		printf("write one block pid = %d\n", tid);
+		printf("file->datablocks[%d] = %d\n", blk, file->datablocks[blk]);
 		
 		ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
 		
@@ -844,6 +896,13 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 
 		pos += n; // update pos.
 		buf += n;
+	
+		printf("write done done = %d\n", write_done);
+		while(!write_done){
+			printf("write not done\n");
+		}
+		
+		printf("for loop done\n");
 	}	
 	
 	return size;
