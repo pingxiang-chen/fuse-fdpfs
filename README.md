@@ -93,6 +93,24 @@ You should see the following:
 
 When you check with nvme-cli, you should be able to see there are 2 bytes written to placement identifier 1.
 
+## Step 5 Run fio without fuse
+
 ```shell
-sudo nvme fdp status /dev/nvme1n1 | grep "Placement \| Media"
+cd scripts
+```
+```shell
+sudo fio fdp_write.fio
+```
+
+
+## Step 5 Run fio with fdpfs
+
+```shell
+cd scripts && ./mount_fdpfs.sh
+```
+
+Open another terminal, and switch to sudo user as well, you should be able to see FDPFS exposes the placment identifier as directorys
+
+```shell
+sudo fio test-small-10s-p0-a.fio
 ```
