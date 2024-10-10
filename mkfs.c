@@ -26,6 +26,8 @@
 #include <byteswap.h>
 #include <endian.h>
 #include <sys/types.h>
+#include <time.h>
+
 #include "fdpfs.h"
 #include "io_uring.h"
 #include "super.h"
@@ -360,8 +362,11 @@ char* read_from_cq(struct ioring_data *ld) {
     unsigned head = 0;
 	head = *cring->head;
 	struct ioring_data* tmp;
+	
+	struct timespec res1,res2;
 
     do {
+		clock_gettime(CLOCK_REALTIME,&res1);
 		pid_t tid = gettid();
 		read_barrier();
 		/*
@@ -375,16 +380,13 @@ char* read_from_cq(struct ioring_data *ld) {
 		cqe = &cring->cqes[head & *ld->cq_ring.ring_mask];
 		tmp = (struct ioring_data*)cqe->user_data;
 
-		/* printf("read_from_cq, pid = %d, nsid = %d, tmp->dspec = %d\n", tid, tmp->nsid, tmp->dspec); */
 		dprint(FDPFS_IO_URING, "read_from_cq, pid = %d, nsid = %d, tmp->dspec = %d\n", tid, tmp->nsid, tmp->dspec);
 		if (cqe->res < 0)
 			fprintf(stderr, "Error: %s\n", strerror(abs(cqe->res)));
 		head++;
+		clock_gettime(CLOCK_REALTIME,&res2);
 		
-		/* for(int i=0; i<4096; i++){ */
-		/* 	printf("tmp->orig_buffer[%d]: %c ", i, tmp->orig_buffer[i]); */ 
-		/* } */
-		/* printf("\n"); */
+		dprint(FDPFS_FUSE, "single request used %lu ns\n",res2.tv_nsec-res1.tv_nsec);
 
 	} while (1);
     
@@ -415,7 +417,6 @@ int fdpfs_nvme_uring_cmd_prep(struct nvme_uring_cmd *cmd, struct ioring_data *ld
 	cmd->cdw13 = ld->dspec << 16;
 	cmd->nsid = ld->nsid;
 	cmd->addr = (__u64)(uintptr_t)ld->orig_buffer;
-	/* cmd->data_len = ld->orig_buffer_size; */
 	cmd->data_len = (nlb + 1)*block_size;	
 	dprint(FDPFS_IO_URING, "fdpfs_nvme_uring_cmd_prep slba = %llu, nlb = %u, cmd->opcode = %u \n", 
 			slba, nlb, cmd->opcode);
@@ -425,8 +426,7 @@ int fdpfs_nvme_uring_cmd_prep(struct nvme_uring_cmd *cmd, struct ioring_data *ld
 			cmd->addr, cmd->data_len);
 	dprint(FDPFS_IO_URING, "fdpfs_nvme_uring_cmd_prep cmd->metadata = %llu cmd->metadata_len = %u \n", 
 			cmd->metadata, cmd->metadata_len);
-
-	/* printf("fdpfs_nvme_uring_cmd_prep = %zu\n", ld->orig_buffer_size); */	
+	
 	return 0;
 }
 
@@ -434,13 +434,10 @@ int fdpfs_ioring_queue(struct ioring_data *ld){
 	struct io_sq_ring *ring = &ld->sq_ring;
 	unsigned tail, next_tail;
 	int ret;
+	struct timespec res1,res2;
 	tail = *ring->tail;
 	next_tail = tail + 1;
-	
-	/* printf("fdpfs_ioring_queue top tail %u\n", tail); */
-	/* ring->array[tail] = ld->index; */
 	ring->array[tail & *ld->sq_ring.ring_mask] = ld->index;
-	/* printf("fdpfs_ioring_queue bottom tail %u\n", tail); */
 	
 	/*
 	 * Tell the kernel we have submitted events with the io_uring_enter() system
@@ -450,19 +447,22 @@ int fdpfs_ioring_queue(struct ioring_data *ld){
 	 * */
 	
 	tail = next_tail;
+	
 	/* Update the tail so the kernel can see it. */
 	if(*ring->tail != tail) {
 		*ring->tail = tail;
 	}
 	
-	ret = io_uring_enter(ld->ring_fd, 1,1, IORING_ENTER_GETEVENTS);
+	clock_gettime(CLOCK_REALTIME,&res1);
+	ret = io_uring_enter(ld->ring_fd, 1, 1, IORING_ENTER_GETEVENTS);
+	clock_gettime(CLOCK_REALTIME,&res2);
+	dprint(FDPFS_FUSE, "io_uring_enter used %lu ns\n",res2.tv_nsec-res1.tv_nsec);
 	
 	if(ret < 0) {
 		perror("io_uring_enter");
 		return 1;
     }	
 	
-	/* printf("fdpfs_ioring_queue\n"); */
 	return 0;
 }
 
@@ -500,16 +500,12 @@ int submit_to_sq(struct fdpfs_dev *dev, struct ioring_data *ld, message_t msg){
 	ld->index = index;
 	slba = msg.slba;
 	nlb = (msg.size % block_size == 0) ?  msg.size / block_size -1 : msg.size / block_size;
-	/* ld->orig_buffer_size = (nlb + 1) * block_size; */
-	/* printf("submit_to_sq orig_buffer_size = %zu\n", ld->orig_buffer_size); */
-	/* ld->orig_buffer = malloc(ld->orig_buffer_size); */
 	
 	switch (msg.ddir) {
     	case DDIR_READ:
 			ld->ddir = DDIR_READ;
 			ld->dtype = 0;
 			ld->dspec = 0;
-			/* nlb += 1; */
 			break;
     	case DDIR_WRITE:
         	ld->ddir = DDIR_WRITE;
@@ -536,6 +532,8 @@ void *receiver(void *arg){
 	dprint(FDPFS_IO_URING, "Initilize Queue id: %d, name: %s, pid: %d\n", 
 			info->queue_id, info->name, tid);
     
+	struct timespec res1,res2;
+
 	if(!ld){
 		perror("malloc");
 		return NULL;
@@ -549,44 +547,34 @@ void *receiver(void *arg){
 	dprint(FDPFS_IO_URING, "io_uring_queue_init success\n");
 
 	ld->orig_buffer_size = (4 + 1) * block_size;
-	printf("malloc orig_buffer orig_buffer_size = %zu\n", ld->orig_buffer_size);
+	dprint(FDPFS_IO_URING, "malloc orig_buffer orig_buffer_size = %zu\n", ld->orig_buffer_size);
 	ld->orig_buffer = malloc(ld->orig_buffer_size);
 	
 
 	while (1) {
 		int ret = mq_receive(info->queue_id, (char *) &msg, sizeof(message_t), NULL);
+		
 		if (ret == -1) {
 			perror("mq_receive");
 			exit(1);
 		}
-		/* printf("receive the message pid = %d, ddir = %d\n", tid, msg.ddir); */ 
 		
-		/* pthread_mutex_lock(&lock); */	
-		
-		/* if(msg.ddir==DDIR_READ){ */
-		/* 	blocks = NULL; */
-		/* 	if(blocks == NULL) */
-		/* 		printf("initialize blocks to null\n"); */
-		/* } */
+		clock_gettime(CLOCK_REALTIME,&res1);
 		submit_to_sq(&dev, ld, msg);
-		fdpfs_ioring_queue(ld);
-		blocks = read_from_cq(ld);
-		
-		/* if(msg.ddir==DDIR_READ) */
-		/* 	printf("finish job pid = %d, DDIR_READ\n", tid); */
-		/* if(msg.ddir==DDIR_WRITE){ */
-		/* 	write_done = true; */
-		/* } */
-		/* while(blocks == NULL) */
-		/* 	printf("blocks is NULL\n!!"); */
-		
-		/* pthread_mutex_unlock(&lock); */ 
-		
-		/* for(int i=0; i<4096; i++){ */
-		/* 	printf("blocks[%d]: %c ", i, blocks[i]); */ 
-		/* } */
-		/* printf("\n"); */
+		clock_gettime(CLOCK_REALTIME,&res2);
+		dprint(FDPFS_FUSE, "submit to sq used %lu ns\n",res2.tv_nsec-res1.tv_nsec);
 
+		clock_gettime(CLOCK_REALTIME,&res1);
+		fdpfs_ioring_queue(ld);
+		clock_gettime(CLOCK_REALTIME,&res2);
+		dprint(FDPFS_FUSE,"fdpfs_ioring_queue used %lu ns\n",res2.tv_nsec-res1.tv_nsec);
+	
+			
+		clock_gettime(CLOCK_REALTIME,&res1);
+		blocks = read_from_cq(ld);
+		clock_gettime(CLOCK_REALTIME,&res2);
+		dprint(FDPFS_FUSE, "read_from_cq used %lu ns\n",res2.tv_nsec-res1.tv_nsec);
+		
 		if(msg.ddir==DDIR_WRITE) 
 			write_done = true;
 		
@@ -675,11 +663,9 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 	
 	dprint(FDPFS_FUSE, "do_read: %s, size: %zu, offset: %ld\n", path, size, offset);
 	
-	
 	size = MIN(size, file->size - offset);
 	
 	for(pos = offset; pos < offset + size;){
-		/* printf("pos = %d, file->size = %ld, size = %lu, total_bytes = %u\n", pos, file->size, size, total_bytes); */
 		n = MIN(block_size - pos % block_size, offset + size - pos);
 		blk = pos/block_size;
 		msg.data = plmtid; // Set data for the message
@@ -704,7 +690,6 @@ int do_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 		
 		for(int i=0; i<n; i++){
 			buf[i] = blocks[i];
-			/* printf("%c\n", blocks[i]); */
 		}
 		
 		pos += n;
@@ -800,7 +785,8 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 	filetype * file = filetype_from_path(pathname);
 	int idx = find_index(plmt_id);
 	int which_queue = idx % num_of_thread;
-		
+	struct timespec res1,res2;
+	
 	dprint(FDPFS_FUSE, "pid = %d, do_write: %s, size: %zu, offset: %ld\n", tid, path, size, offset);
 	counter += 1;
 
@@ -809,13 +795,10 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 	
 	plmt_id = get_plmtid_from_path(path);
 	
-	/* printf("\n Job %d has started, counter=%d\n", tid, counter); */ 
-	
 	for(pos = offset; pos < offset + size;){
 		// read one block out
 		n = MIN(block_size - pos % block_size, offset + size - pos);
 		blocks = NULL;
-		/* printf("pid = %d, make blocks to null!\n", tid); */
 		blk = pos/block_size;
 		msg.data = plmt_id; // Set data for the message
 		msg.buffer = NULL; 
@@ -826,23 +809,20 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		idx = find_index(plmt_id);
 		which_queue = idx % num_of_thread;
 		
+		clock_gettime(CLOCK_REALTIME,&res1);
 		int ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
-		
+		clock_gettime(CLOCK_REALTIME,&res2);
+		dprint(FDPFS_FUSE, "send read message to queue took %lu ns\n",res2.tv_nsec-res1.tv_nsec);
+
 		if(ret == -1){
 			return -EIO;
 		}
-
-		while(blocks==NULL){
-			/* printf("wait for blocks to come!!!\n"); */
-		}
-
-		/* printf("read block %d\n", file->datablocks[blk]); */
-
-		/* for(int i=0; i<16; i++){ */
-		/* 	printf("blocks[%d]: %c \n", i, blocks[i]); */
-		/* } */	
 		
-		/* printf("\n"); */
+		clock_gettime(CLOCK_REALTIME,&res1);
+		while(blocks==NULL){
+		}
+		clock_gettime(CLOCK_REALTIME,&res2);
+		dprint(FDPFS_FUSE, "wait for read block done %lu ns\n",res2.tv_nsec-res1.tv_nsec);
 
 		blk = pos/block_size;
 	
@@ -855,20 +835,12 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 		msg.ddir = DDIR_WRITE;
 		msg.slba = file->datablocks[blk];
 	
-		/* if(blocks==NULL) */
-		/* 	printf("blocks is null!!!!\n"); */
-
 		for(int i=0; i<n; i++){
 			blocks[pos % block_size + i] = buf[i];
-			/* printf("blocks[%d] = %c\n", pos % block_size + i, blocks[pos % block_size + i]); */
-			/* printf("write buf[%d] = %c\n", i, buf[i]); */
 		}
 		
-		/* printf("done block memory write\n"); */
-
 		msg.buffer = blocks; 
 		
-		/* printf("file->datablocks[%d] = %d\n", blk, file->datablocks[blk]); */
 		
 		write_done = false;
 		ret = mq_send(queue_infos[which_queue].queue_id, (const char *) &msg, sizeof(message_t), 0); // Send message
@@ -878,17 +850,16 @@ int do_write(const char *path, const char *buf, size_t size, off_t offset, struc
 			return -EIO;
 		}
 		
+		clock_gettime(CLOCK_REALTIME,&res1);
 		while(!write_done){
-			/* printf("write not done\n"); */
 		}
-		/* printf("send to device \n"); */
-
+		clock_gettime(CLOCK_REALTIME,&res2);
+		dprint(FDPFS_FUSE, "wait for write block done %lu ns\n",res2.tv_nsec-res1.tv_nsec);
+		
 		pos += n; // update pos.
 		buf += n;
 	}	
 	
-	/* pthread_mutex_unlock(&lock); */ 
-    /* printf("\n Job %d has finished\n", tid); */ 
 	return size;
 }
 
