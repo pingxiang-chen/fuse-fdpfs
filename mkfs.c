@@ -357,27 +357,27 @@ err:
  * */
 
 char* read_from_cq(struct ioring_data *ld) {
-	struct io_cq_ring *cring = &ld->cq_ring;
+	struct io_cq_ring *ring = &ld->cq_ring;
     struct io_uring_cqe *cqe;
-    unsigned head = 0;
-	head = *cring->head;
+    unsigned head, reaped = 0;
 	struct ioring_data* tmp;
 	
 	struct timespec res1,res2;
 
-    do {
+	head = *ring->head;
+    
+	do {
 		clock_gettime(CLOCK_REALTIME,&res1);
 		pid_t tid = gettid();
-		read_barrier();
 		/*
 		 * Remember, this is a ring buffer. If head == tail, it means that the
 		 * buffer is empty.
 		 * */
-		if (head == *cring->tail){
+		if (head == atomic_load_acquire(ring->tail)){
 			break;
 		}
 		/* Get the entry */
-		cqe = &cring->cqes[head & *ld->cq_ring.ring_mask];
+		cqe = &ring->cqes[head & *ld->cq_ring.ring_mask];
 		tmp = (struct ioring_data*)cqe->user_data;
 
 		dprint(FDPFS_IO_URING, "read_from_cq, pid = %d, nsid = %d, tmp->dspec = %d\n", tid, tmp->nsid, tmp->dspec);
@@ -389,9 +389,11 @@ char* read_from_cq(struct ioring_data *ld) {
 		dprint(FDPFS_FUSE, "single request used %lu ns\n",res2.tv_nsec-res1.tv_nsec);
 
 	} while (1);
-    
-	*cring->head = head;
-	write_barrier();
+   	
+	if(reaped)
+		atomic_store_release(ring->head, head);
+	/* *cring->head = head; */
+	
 	return tmp->orig_buffer;
 }
 
@@ -454,7 +456,7 @@ int fdpfs_ioring_queue(struct ioring_data *ld){
 	}
 	
 	clock_gettime(CLOCK_REALTIME,&res1);
-	ret = io_uring_enter(ld->ring_fd, 1, 1, IORING_ENTER_GETEVENTS);
+	ret = io_uring_enter(ld->ring_fd, 1, 0, IORING_ENTER_GETEVENTS);
 	clock_gettime(CLOCK_REALTIME,&res2);
 	dprint(FDPFS_FUSE, "io_uring_enter used %lu ns\n",res2.tv_nsec-res1.tv_nsec);
 	

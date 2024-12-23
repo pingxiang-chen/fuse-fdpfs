@@ -53,6 +53,11 @@ struct io_cq_ring {
 	struct io_uring_cqe *cqes;
 };
 
+struct ioring_mmap{
+	void *ptr;
+	size_t len;
+};
+
 struct ioring_data {
 	int ring_fd;
 
@@ -64,7 +69,7 @@ struct ioring_data {
 	struct io_sq_ring sq_ring;
 	struct io_uring_sqe *sqes;
 	/* struct iovec *iovecs; */
-	/* unsigned sq_ring_mask; */
+	unsigned sq_ring_mask;
 
 	struct io_cq_ring cq_ring;
 	enum fdpfs_ddir ddir;
@@ -81,14 +86,14 @@ struct ioring_data {
 	char *orig_buffer;
 	size_t orig_buffer_size;
 
-	/* unsigned cq_ring_mask; */
+	unsigned cq_ring_mask;
 
 	/* int queued; */
 	/* int cq_ring_off; */
 	/* unsigned iodepth; */
 	/* int prepped; */
 
-	/* struct ioring_mmap mmap[3]; */
+	struct ioring_mmap mmap[3];
 
 	/* struct cmdprio cmdprio; */
 

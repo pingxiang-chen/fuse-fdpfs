@@ -69,59 +69,48 @@ int fdpfs_ioring_mmap(struct ioring_data *ld, struct io_uring_params *p)
 {   
 	struct io_sq_ring *sring = &ld->sq_ring;
 	struct io_cq_ring *cring = &ld->cq_ring;
-	void *sq_ptr, *cq_ptr;
+	void *ptr;
 
-	int sring_sz = p->sq_off.array + p->sq_entries * sizeof(__u32);
-	int cring_sz = p->cq_off.cqes + p->cq_entries * sizeof(struct io_uring_cqe);
+	ld->mmap[0].len = p->sq_off.array + p->sq_entries * sizeof(__u32);
+	ptr = mmap(0, ld->mmap[0].len, PROT_READ | PROT_WRITE,
+		MAP_SHARED | MAP_POPULATE, ld->ring_fd,
+		IORING_OFF_SQ_RING);
+	ld->mmap[0].ptr = ptr;
+	sring->head = ptr + p->sq_off.head;
+	sring->tail = ptr + p->sq_off.tail;
+	sring->ring_mask = ptr + p->sq_off.ring_mask;
+	sring->ring_entries = ptr + p->sq_off.ring_entries;
+	sring->flags = ptr + p->sq_off.flags;
+	sring->array = ptr + p->sq_off.array;
+	ld->sq_ring_mask = *sring->ring_mask;
 
-	/*
-	 * Map in the submission and completion queue ring buffers.
-	 * Older kernels only map in the submission queue, though.
-	*/
-
-	sq_ptr = mmap(0, sring_sz, PROT_READ | PROT_WRITE, 
-			MAP_SHARED | MAP_POPULATE, 
-			ld->ring_fd, IORING_OFF_SQ_RING);
+	if (p->flags & IORING_SETUP_SQE128)
+		ld->mmap[1].len = 2 * p->sq_entries * sizeof(struct io_uring_sqe);
+	else
+		ld->mmap[1].len = p->sq_entries * sizeof(struct io_uring_sqe);
 	
-	if (sq_ptr == MAP_FAILED) {
-		perror("mmap failed");
-		return 1;
-	}	
+	ld->sqes = mmap(0, ld->mmap[1].len, PROT_READ | PROT_WRITE,
+			MAP_SHARED | MAP_POPULATE, ld->ring_fd,
+			IORING_OFF_SQES);
+	ld->mmap[1].ptr = ld->sqes;
 
-	/*
-	 * Save useful fields in a global app_io_sq_ring struct for later 
-	 * easy reference 
-	*/
-	sring->head = sq_ptr + p->sq_off.head;
-	sring->tail = sq_ptr + p->sq_off.tail;
-	sring->ring_mask = sq_ptr + p->sq_off.ring_mask;
-	sring->ring_entries = sq_ptr + p->sq_off.ring_entries;
-	sring->flags = sq_ptr + p->sq_off.flags;
-	sring->array = sq_ptr + p->sq_off.array;
-
-	/* Map in the submission queue entries array */
-	ld->sqes = mmap(0, p->sq_entries * sizeof(struct io_uring_sqe),
-            PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
-            ld->ring_fd, IORING_OFF_SQES);
-    
-	if (ld->sqes == MAP_FAILED) {
-		perror("mmap");
-		return 1;
+	if (p->flags & IORING_SETUP_CQE32) {
+		ld->mmap[2].len = p->cq_off.cqes +
+				2 * p->cq_entries * sizeof(struct io_uring_cqe);
+	} else {
+		ld->mmap[2].len = p->cq_off.cqes +
+				p->cq_entries * sizeof(struct io_uring_cqe);
 	}
-	
-	cq_ptr = mmap(0, cring_sz, PROT_READ | PROT_WRITE,
-			MAP_SHARED | MAP_POPULATE, ld->ring_fd, IORING_OFF_CQ_RING);
-
-	/*
-	 * Save useful fields in a global app_io_cq_ring struct for later
-	 * easy reference 
-	*/
-	cring->head = cq_ptr + p->cq_off.head;
-	cring->tail = cq_ptr + p->cq_off.tail;
-	cring->ring_mask = cq_ptr + p->cq_off.ring_mask;
-	cring->ring_entries = cq_ptr + p->cq_off.ring_entries;
-	cring->cqes = cq_ptr + p->cq_off.cqes;
-
+	ptr = mmap(0, ld->mmap[2].len, PROT_READ | PROT_WRITE,
+		MAP_SHARED | MAP_POPULATE, ld->ring_fd,
+		IORING_OFF_CQ_RING);
+	ld->mmap[2].ptr = ptr;
+	cring->head = ptr + p->cq_off.head;
+	cring->tail = ptr + p->cq_off.tail;
+	cring->ring_mask = ptr + p->cq_off.ring_mask;
+	cring->ring_entries = ptr + p->cq_off.ring_entries;
+	cring->cqes = ptr + p->cq_off.cqes;
+	ld->cq_ring_mask = *cring->ring_mask;
 	return 0;
 }
 

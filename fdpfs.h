@@ -2,6 +2,21 @@
 #define FDPFS_H
 
 #include <stdbool.h>
+#include <stdatomic.h>
+
+#define atomic_add(p, v)                    \
+    atomic_fetch_add((_Atomic typeof(*(p)) *)(p), v)
+#define atomic_sub(p, v)                    \
+    atomic_fetch_sub((_Atomic typeof(*(p)) *)(p), v)
+#define atomic_load_relaxed(p)                  \
+    atomic_load_explicit((_Atomic typeof(*(p)) *)(p),   \
+                 memory_order_relaxed)
+#define atomic_load_acquire(p)                  \
+    atomic_load_explicit((_Atomic typeof(*(p)) *)(p),   \
+                 memory_order_acquire)
+#define atomic_store_release(p, v)              \
+    atomic_store_explicit((_Atomic typeof(*(p)) *)(p), (v), \
+                  memory_order_release)
 
 struct placementIDs_ {
 	uint16_t pid;
