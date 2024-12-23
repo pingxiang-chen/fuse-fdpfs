@@ -103,10 +103,10 @@ sudo fio fdp_write.fio
 ```
 
 
-## Step 5 Run fio with fdpfs
+## Step 5 Run fio with fdpfs in background mode
 
 ```shell
-cd scripts && ./mount_fdpfs.sh
+cd scripts && ./mount_fdpfs.sh 1 
 ```
 
 Open another terminal, and switch to sudo user as well, you should be able to see FDPFS exposes the placment identifier as directorys
