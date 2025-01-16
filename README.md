@@ -109,7 +109,7 @@ sudo fio fdp_write.fio
 sudo fio fdp_read.fio
 ```
 
-## Step 5 Run fio with fdpfs in background mode
+## Step 6 Run fio with fdpfs in background mode
 
 ```shell
 cd scripts && ./mount_fdpfs.sh 1 
