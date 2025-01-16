@@ -1,5 +1,5 @@
 [global]
-name=fio-seq-write
+name=fio-seq-read
 filename=fio-seq-write-small
 rw=read
 bs=4K
