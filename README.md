@@ -98,10 +98,16 @@ When you check with nvme-cli, you should be able to see there are 2 bytes writte
 ```shell
 cd scripts
 ```
+### Test write
+
 ```shell
 sudo fio fdp_write.fio
 ```
 
+### Test read
+```shell
+sudo fio fdp_read.fio
+```
 
 ## Step 5 Run fio with fdpfs in background mode
 
@@ -111,6 +117,13 @@ cd scripts && ./mount_fdpfs.sh 1
 
 Open another terminal, and switch to sudo user as well, you should be able to see FDPFS exposes the placment identifier as directorys
 
+### Test write
+
 ```shell
-sudo fio test-small-10s-p0-a.fio
+sudo fio test-write-small-10s-p0-a.fio
+```
+
+### Test read
+```shell
+sudo fio test-read-small-10s-p0-a.fio
 ```
