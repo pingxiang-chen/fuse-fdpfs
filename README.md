@@ -2,6 +2,13 @@
 
 FDPFS is a File System in Userspace (FUSE) - based file system that expose FDP SSD's chariteristics to allow ease of use data placement on FDP-enabled SSDs.
 
+# Citation
+If you use this work, please cite our paper published in 
+[IEEE Embedded Systems Letters, vol. 16, no. 4](https://ieeexplore.ieee.org/abstract/document/10779575).
+
+> Ping-Xiang Chen, Dongjoo Seo, and Nikil Dutt. "FDPFS: Leveraging File System Abstraction for FDP SSD Data Placement." IEEE Embedded Systems Letters 16.4 (2024): 349-352. https://doi.org/10.1109/LES.2024.3443205
+
+
 # How to set up FDPFS
 
 ## Step 0 Clone the repository
